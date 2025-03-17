@@ -1,0 +1,210 @@
+# PQC (Post-Quantum Cryptography) JavaScript Implementation
+
+## Project Overview
+
+PQC is a JavaScript implementation of NIST's Post-Quantum Cryptography standards, specifically focusing on the FIPS (Federal Information Processing Standards) algorithms designed to be resistant to quantum computer attacks. This library provides cryptographic primitives that can secure communications against both classical and quantum computing threats.
+
+The project implements three main cryptographic standards:
+1. ML-KEM (Multi-Lattice Key Encapsulation Mechanism) - FIPS 203
+2. ML-DSA (Multi-Lattice Digital Signature Algorithm) - FIPS 204
+3. SLH-DSA (Stateless Hash-based Digital Signature Algorithm) - FIPS 205
+
+## Technical Architecture
+
+### Core Components
+
+1. **FIPS_203/ml-kem.js**: Implementation of ML-KEM (formerly known as CRYSTALS-Kyber)
+   - Provides key encapsulation mechanisms at three security levels (512, 768, 1024)
+   - Uses lattice-based cryptography with Number Theoretic Transform (NTT)
+   - Includes keygen, encapsulate, and decapsulate functions
+
+2. **FIPS_204/ml-dsa.js**: Implementation of ML-DSA (formerly known as CRYSTALS-Dilithium)
+   - Provides digital signature algorithms at three security levels (44, 65, 87)
+   - Uses lattice-based cryptography similar to ML-KEM but with different parameters
+   - Includes keygen, sign, and verify functions
+
+3. **FIPS_205/slh-dsa.js**: Implementation of SLH-DSA (formerly known as SPHINCS+)
+   - Provides hash-based signatures with multiple variants:
+     - SHA2 and SHAKE hash function variants
+     - Three security levels (128, 192, 256)
+     - Fast (f) and small (s) parameter sets for each security level
+   - Uses Merkle trees, WOTS (Winternitz One-Time Signatures), and FORS (Forest of Random Subsets)
+
+4. **utilities/utils.js**: Common utility functions
+   - Byte manipulation (conversion, comparison, cleaning)
+   - Encoding/decoding helpers
+   - Message formatting
+
+5. **utilities/_crystals.js**: Shared functionality for lattice-based algorithms
+   - Number Theoretic Transform (NTT) implementation
+   - Bit manipulation utilities
+   - Polynomial operations
+
+### Algorithm Details
+
+#### ML-KEM (FIPS 203)
+- **Security Levels**:
+  - ML-KEM-512: 128-bit security
+  - ML-KEM-768: 192-bit security
+  - ML-KEM-1024: 256-bit security
+- **Key Parameters**:
+  - All variants use polynomial ring with N=256 and Q=3329
+  - Different K values (2, 3, 4) for different security levels
+- **Operations**:
+  - Key Generation: Creates public/private key pairs
+  - Encapsulation: Generates a shared secret and ciphertext
+  - Decapsulation: Recovers the shared secret from ciphertext using private key
+
+#### ML-DSA (FIPS 204)
+- **Security Levels**:
+  - ML-DSA-44: 128-bit security
+  - ML-DSA-65: 192-bit security
+  - ML-DSA-87: 256-bit security
+- **Key Parameters**:
+  - Uses polynomial ring with N=256 and Q=8380417
+  - Different K and L values for different security levels
+- **Operations**:
+  - Key Generation: Creates public/private key pairs
+  - Sign: Creates a signature for a message
+  - Verify: Verifies a signature against a message and public key
+
+#### SLH-DSA (FIPS 205)
+- **Variants**:
+  - Hash function: SHA2 or SHAKE
+  - Security levels: 128, 192, 256 bits
+  - Size/speed tradeoff: Fast (f) or Small (s)
+- **Key Components**:
+  - WOTS (Winternitz One-Time Signature)
+  - FORS (Forest of Random Subsets)
+  - Hypertree structure
+- **Operations**:
+  - Key Generation: Creates public/private key pairs
+  - Sign: Creates a signature for a message
+  - Verify: Verifies a signature against a message and public key
+
+## Implementation Details
+
+### Dependencies
+- **@noble/hashes**: Provides cryptographic hash functions (SHA-2, SHA-3, SHAKE)
+
+### Performance Characteristics
+Based on benchmark results:
+
+#### ML-KEM Performance
+- Key generation: 1,679-3,779 ops/sec (264-595μs/op)
+- Encapsulation: 1,503-3,522 ops/sec (283-664μs/op)
+- Decapsulation: 1,424-2,235 ops/sec (447-701μs/op)
+
+#### ML-DSA Performance
+- Key generation: 251-649 ops/sec (1540-3970μs/op)
+- Signing: 54-271 ops/sec (3686-18357μs/op)
+- Verification: 227-550 ops/sec (1816-4393μs/op)
+
+#### SLH-DSA Performance
+- Key generation: 0-213 ops/sec (4672-2251880μs/op)
+- Signing: 0-9 ops/sec (107743-20366042μs/op)
+- Verification: 20-455 ops/sec (2196-49802μs/op)
+
+Performance varies significantly based on the security level and parameter set, with higher security levels generally requiring more computation time.
+
+## Usage Examples
+
+### ML-KEM (Key Encapsulation)
+
+```javascript
+import { ml_kem, utils } from 'pqc';
+
+// 1. [Alice] generates a key pair
+const aliceKeys = ml_kem.ml_kem768.keygen();
+
+// 2. [Bob] generates a shared secret for Alice's public key
+const { cipherText, sharedSecret: bobShared } = ml_kem.ml_kem768.encapsulate(aliceKeys.publicKey);
+
+// 3. [Alice] gets and decrypts cipherText from Bob
+const aliceShared = ml_kem.ml_kem768.decapsulate(cipherText, aliceKeys.secretKey);
+
+// Now, both Alice and Bob have the same sharedSecret key
+console.log('Alice shared secret:', aliceShared);
+console.log('Bob shared secret:', bobShared);
+```
+
+### ML-DSA (Digital Signatures)
+
+```javascript
+import { ml_dsa, utils } from 'pqc';
+
+// 1. [Alice] generates a key pair
+const keys = ml_dsa.ml_dsa65.keygen();
+
+// 2. [Alice] signs the message
+const msg = utils.utf8ToBytes('Post Quantum Cryptography');
+const sig = ml_dsa.ml_dsa65.sign(keys.secretKey, msg);
+
+// 3. [Bob] verifies the message signature
+const isValid = ml_dsa.ml_dsa65.verify(keys.publicKey, msg, sig);
+console.log('Signature valid:', isValid);
+```
+
+### SLH-DSA (Hash-based Signatures)
+
+```javascript
+import { slh_dsa, utils } from 'pqc';
+
+// 1. [Alice] generates a key pair using SLH-DSA-128f
+const sph = slh_dsa.slh_dsa_sha2_128f;
+const keys = sph.keygen();
+
+// 2. [Alice] signs the message
+const msg = utils.utf8ToBytes('Post Quantum Cryptography');
+const sig = sph.sign(keys.secretKey, msg);
+
+// 3. [Bob] verifies the signature
+const isValid = sph.verify(keys.publicKey, msg, sig);
+console.log('Signature valid for SLH-DSA:', isValid);
+```
+
+## Real-World Applications
+
+### 1. Quantum-Resistant Key Exchange
+ML-KEM can replace current key exchange mechanisms (like RSA, ECDH) in TLS/SSL protocols to secure web communications against quantum attacks.
+
+### 2. Secure Document Signing
+ML-DSA and SLH-DSA can be used for digital signatures in document signing systems, certificate authorities, and code signing applications.
+
+### 3. Secure Messaging
+The algorithms can be integrated into end-to-end encrypted messaging applications to provide quantum-resistant security.
+
+### 4. Blockchain and Cryptocurrency
+Post-quantum signatures can secure blockchain transactions against future quantum attacks.
+
+### 5. VPN and Secure Tunneling
+ML-KEM can be used for key exchange in VPN protocols to establish quantum-resistant secure tunnels.
+
+### 6. IoT Security
+Lightweight variants can be deployed on IoT devices to ensure long-term security in the quantum era.
+
+## Technical Challenges and Considerations
+
+1. **Key and Signature Sizes**: Post-quantum algorithms generally have larger key and signature sizes compared to classical algorithms.
+
+2. **Performance Tradeoffs**: Higher security levels come with significant performance costs, especially for SLH-DSA.
+
+3. **Parameter Selection**: Choosing the right algorithm and security level depends on the specific application requirements for security, performance, and key/signature size.
+
+4. **Implementation Security**: The library relies on secure random number generation and proper memory management to prevent side-channel attacks.
+
+5. **Standardization Status**: These algorithms are based on NIST standards that are still being finalized, so future updates may be needed.
+
+## Demonstration
+
+To demonstrate the library's functionality:
+
+1. **Basic Usage**: Run `node casual_play.js` to see examples of key encapsulation and digital signatures.
+
+2. **Testing**: Run `npm run test` to verify the correctness of all implemented algorithms.
+
+3. **Benchmarking**: Run `npm run benchmark` to measure the performance of different algorithms and security levels.
+
+## Conclusion
+
+The PQC library provides a comprehensive JavaScript implementation of NIST's post-quantum cryptographic standards. It offers a range of algorithms with different security levels and performance characteristics, allowing developers to integrate quantum-resistant cryptography into their applications. As quantum computing advances, this library will become increasingly important for maintaining the security of digital communications and signatures. 

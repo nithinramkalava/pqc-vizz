@@ -1,0 +1,1729 @@
+mlkem:
+/**
+ * ML-KEM: Module Lattice-based Key Encapsulation Mechanism from
+ * [FIPS-203](https://csrc.nist.gov/pubs/fips/203/ipd). A.k.a. CRYSTALS-Kyber.
+ *
+ * Key encapsulation is similar to DH / ECDH (think X25519), with important differences:
+ * * Unlike in ECDH, we can't verify if it was "Bob" who've sent the shared secret
+ * * Unlike ECDH, it is probabalistic and relies on quality of randomness (CSPRNG).
+ * * Decapsulation never throws an error, even when shared secret was
+ *   encrypted by a different public key. It will just return a different shared secret.
+ *
+ * There are some concerns with regards to security: see
+ * [djb blog](https://blog.cr.yp.to/20231003-countcorrectly.html) and
+ * [mailing list](https://groups.google.com/a/list.nist.gov/g/pqc-forum/c/W2VOzy0wz_E).
+ *
+ * Has similar internals to ML-DSA, but their keys and params are different.
+ *
+ * Check out [official site](https://www.pq-crystals.org/kyber/resources.shtml),
+ * [repo](https://github.com/pq-crystals/kyber),
+ * [spec](https://datatracker.ietf.org/doc/draft-cfrg-schwabe-kyber/).
+ */
+import { sha3_256, sha3_512, shake256 } from "@noble/hashes/sha3";
+import { u32 } from "@noble/hashes/utils";
+import { genCrystals, XOF128 } from "../utilities/_crystals.js";
+import { ensureBytes, randomBytes, equalBytes, cleanBytes, splitCoder, vecCoder } from "../utilities/utils.js";
+
+const N = 256; // Kyber (not FIPS-203) supports different lengths, but all std modes were using 256
+const Q = 3329; // 13*(2**8)+1, modulo prime
+const F = 3303; // 3303 ≡ 128**(−1) mod q (FIPS-203)
+const ROOT_OF_UNITY = 17; // ζ = 17 ∈ Zq is a primitive 256-th root of unity modulo Q. ζ**128 ≡−1
+const { mod, nttZetas, NTT, bitsCoder } = genCrystals({
+    N,
+    Q,
+    F,
+    ROOT_OF_UNITY,
+    newPoly: (n) => new Uint16Array(n),
+    brvBits: 7,
+    isKyber: true,
+});
+/** Internal params of ML-KEM versions */
+// prettier-ignore
+const PARAMS = {
+    512: { N, Q, K: 2, ETA1: 3, ETA2: 2, du: 10, dv: 4, RBGstrength: 128 },
+    768: { N, Q, K: 3, ETA1: 2, ETA2: 2, du: 10, dv: 4, RBGstrength: 192 },
+    1024: { N, Q, K: 4, ETA1: 2, ETA2: 2, du: 11, dv: 5, RBGstrength: 256 },
+};
+// FIPS-203: compress/decompress
+const compress = (d) => {
+    // Special case, no need to compress, pass as is, but strip high bytes on compression
+    if (d >= 12)
+        return { encode: (i) => i, decode: (i) => i };
+    // NOTE: we don't use float arithmetic (forbidden by FIPS-203 and high chance of bugs).
+    // Comments map to python implementation in RFC (draft-cfrg-schwabe-kyber)
+    // const round = (i: number) => Math.floor(i + 0.5) | 0;
+    const a = 2 ** (d - 1);
+    return {
+        // const compress = (i: number) => round((2 ** d / Q) * i) % 2 ** d;
+        encode: (i) => ((i << d) + Q / 2) / Q,
+        // const decompress = (i: number) => round((Q / 2 ** d) * i);
+        decode: (i) => (i * Q + a) >>> d,
+    };
+};
+// NOTE: we merge encoding and compress because it is faster, also both require same d param
+// Converts between bytes and d-bits compressed representation. Kinda like convertRadix2 from @scure/base
+// decode(encode(t)) == t, but there is loss of information on encode(decode(t))
+const polyCoder = (d) => bitsCoder(d, compress(d));
+function polyAdd(a, b) {
+    for (let i = 0; i < N; i++)
+        a[i] = mod(a[i] + b[i]); // a += b
+}
+function polySub(a, b) {
+    for (let i = 0; i < N; i++)
+        a[i] = mod(a[i] - b[i]); // a -= b
+}
+// FIPS-203: Computes the product of two degree-one polynomials with respect to a quadratic modulus
+function BaseCaseMultiply(a0, a1, b0, b1, zeta) {
+    const c0 = mod(a1 * b1 * zeta + a0 * b0);
+    const c1 = mod(a0 * b1 + a1 * b0);
+    return { c0, c1 };
+}
+// FIPS-203: Computes the product (in the ring Tq) of two NTT representations. NOTE: works inplace for f
+// NOTE: since multiply defined only for NTT representation, we need to convert to NTT, multiply and convert back
+function MultiplyNTTs(f, g) {
+    for (let i = 0; i < N / 2; i++) {
+        let z = nttZetas[64 + (i >> 1)];
+        if (i & 1)
+            z = -z;
+        const { c0, c1 } = BaseCaseMultiply(f[2 * i + 0], f[2 * i + 1], g[2 * i + 0], g[2 * i + 1], z);
+        f[2 * i + 0] = c0;
+        f[2 * i + 1] = c1;
+    }
+    return f;
+}
+// Return poly in NTT representation
+function SampleNTT(xof) {
+    const r = new Uint16Array(N);
+    for (let j = 0; j < N;) {
+        const b = xof();
+        if (b.length % 3)
+            throw new Error('SampleNTT: unaligned block');
+        for (let i = 0; j < N && i + 3 <= b.length; i += 3) {
+            const d1 = ((b[i + 0] >> 0) | (b[i + 1] << 8)) & 0xfff;
+            const d2 = ((b[i + 1] >> 4) | (b[i + 2] << 4)) & 0xfff;
+            if (d1 < Q)
+                r[j++] = d1;
+            if (j < N && d2 < Q)
+                r[j++] = d2;
+        }
+    }
+    return r;
+}
+// Sampling from the centered binomial distribution
+// Returns poly with small coefficients (noise/errors)
+function sampleCBD(PRF, seed, nonce, eta) {
+    const buf = PRF((eta * N) / 4, seed, nonce);
+    const r = new Uint16Array(N);
+    const b32 = u32(buf);
+    let len = 0;
+    for (let i = 0, p = 0, bb = 0, t0 = 0; i < b32.length; i++) {
+        let b = b32[i];
+        for (let j = 0; j < 32; j++) {
+            bb += b & 1;
+            b >>= 1;
+            len += 1;
+            if (len === eta) {
+                t0 = bb;
+                bb = 0;
+            }
+            else if (len === 2 * eta) {
+                r[p++] = mod(t0 - bb);
+                bb = 0;
+                len = 0;
+            }
+        }
+    }
+    if (len)
+        throw new Error(`sampleCBD: leftover bits: ${len}`);
+    return r;
+}
+// K-PKE
+// As per FIPS-203, it doesn't perform any input validation and can't be used in standalone fashion.
+const genKPKE = (opts) => {
+    const { K, PRF, XOF, HASH512, ETA1, ETA2, du, dv } = opts;
+    const poly1 = polyCoder(1);
+    const polyV = polyCoder(dv);
+    const polyU = polyCoder(du);
+    const publicCoder = splitCoder(vecCoder(polyCoder(12), K), 32);
+    const secretCoder = vecCoder(polyCoder(12), K);
+    const cipherCoder = splitCoder(vecCoder(polyU, K), polyV);
+    const seedCoder = splitCoder(32, 32);
+    return {
+        secretCoder,
+        secretKeyLen: secretCoder.bytesLen,
+        publicKeyLen: publicCoder.bytesLen,
+        cipherTextLen: cipherCoder.bytesLen,
+        keygen: (seed) => {
+            const seedDst = new Uint8Array(33);
+            seedDst.set(seed);
+            seedDst[32] = K;
+            const seedHash = HASH512(seedDst);
+            const [rho, sigma] = seedCoder.decode(seedHash);
+            const sHat = [];
+            const tHat = [];
+            for (let i = 0; i < K; i++)
+                sHat.push(NTT.encode(sampleCBD(PRF, sigma, i, ETA1)));
+            const x = XOF(rho);
+            for (let i = 0; i < K; i++) {
+                const e = NTT.encode(sampleCBD(PRF, sigma, K + i, ETA1));
+                for (let j = 0; j < K; j++) {
+                    const aji = SampleNTT(x.get(j, i)); // A[j][i], inplace
+                    polyAdd(e, MultiplyNTTs(aji, sHat[j]));
+                }
+                tHat.push(e); // t ← A ◦ s + e
+            }
+            x.clean();
+            const res = {
+                publicKey: publicCoder.encode([tHat, rho]),
+                secretKey: secretCoder.encode(sHat),
+            };
+            cleanBytes(rho, sigma, sHat, tHat, seedDst, seedHash);
+            return res;
+        },
+        encrypt: (publicKey, msg, seed) => {
+            const [tHat, rho] = publicCoder.decode(publicKey);
+            const rHat = [];
+            for (let i = 0; i < K; i++)
+                rHat.push(NTT.encode(sampleCBD(PRF, seed, i, ETA1)));
+            const x = XOF(rho);
+            const tmp2 = new Uint16Array(N);
+            const u = [];
+            for (let i = 0; i < K; i++) {
+                const e1 = sampleCBD(PRF, seed, K + i, ETA2);
+                const tmp = new Uint16Array(N);
+                for (let j = 0; j < K; j++) {
+                    const aij = SampleNTT(x.get(i, j)); // A[i][j], inplace
+                    polyAdd(tmp, MultiplyNTTs(aij, rHat[j])); // t += aij * rHat[j]
+                }
+                polyAdd(e1, NTT.decode(tmp)); // e1 += tmp
+                u.push(e1);
+                polyAdd(tmp2, MultiplyNTTs(tHat[i], rHat[i])); // t2 += tHat[i] * rHat[i]
+                tmp.fill(0);
+            }
+            x.clean();
+            const e2 = sampleCBD(PRF, seed, 2 * K, ETA2);
+            polyAdd(e2, NTT.decode(tmp2)); // e2 += tmp2
+            const v = poly1.decode(msg); // encode plaintext m into polynomial v
+            polyAdd(v, e2); // v += e2
+            cleanBytes(tHat, rHat, tmp2, e2);
+            return cipherCoder.encode([u, v]);
+        },
+        decrypt: (cipherText, privateKey) => {
+            const [u, v] = cipherCoder.decode(cipherText);
+            const sk = secretCoder.decode(privateKey); // s  ← ByteDecode_12(dkPKE)
+            const tmp = new Uint16Array(N);
+            for (let i = 0; i < K; i++)
+                polyAdd(tmp, MultiplyNTTs(sk[i], NTT.encode(u[i]))); // tmp += sk[i] * u[i]
+            polySub(v, NTT.decode(tmp)); // v += tmp
+            cleanBytes(tmp, sk, u);
+            return poly1.encode(v);
+        },
+    };
+};
+function createKyber(opts) {
+    const KPKE = genKPKE(opts);
+    const { HASH256, HASH512, KDF } = opts;
+    const { secretCoder: KPKESecretCoder, cipherTextLen } = KPKE;
+    const publicKeyLen = KPKE.publicKeyLen; // 384*K+32
+    const secretCoder = splitCoder(KPKE.secretKeyLen, KPKE.publicKeyLen, 32, 32);
+    const secretKeyLen = secretCoder.bytesLen;
+    const msgLen = 32;
+    return {
+        publicKeyLen,
+        msgLen,
+        keygen: (seed = randomBytes(64)) => {
+            ensureBytes(seed, 64);
+            const { publicKey, secretKey: sk } = KPKE.keygen(seed.subarray(0, 32));
+            const publicKeyHash = HASH256(publicKey);
+            // (dkPKE||ek||H(ek)||z)
+            const secretKey = secretCoder.encode([sk, publicKey, publicKeyHash, seed.subarray(32)]);
+            cleanBytes(sk, publicKeyHash);
+            return { publicKey, secretKey };
+        },
+        encapsulate: (publicKey, msg = randomBytes(32)) => {
+            ensureBytes(publicKey, publicKeyLen);
+            ensureBytes(msg, msgLen);
+            // FIPS-203 includes additional verification check for modulus
+            const eke = publicKey.subarray(0, 384 * opts.K);
+            const ek = KPKESecretCoder.encode(KPKESecretCoder.decode(eke.slice())); // Copy because of inplace encoding
+            // (Modulus check.) Perform the computation ek ← ByteEncode12(ByteDecode12(eke)).
+            // If ek = ̸ eke, the input is invalid. (See Section 4.2.1.)
+            if (!equalBytes(ek, eke)) {
+                cleanBytes(ek);
+                throw new Error('ML-KEM.encapsulate: wrong publicKey modulus');
+            }
+            cleanBytes(ek);
+            const kr = HASH512.create().update(msg).update(HASH256(publicKey)).digest(); // derive randomness
+            const cipherText = KPKE.encrypt(publicKey, msg, kr.subarray(32, 64));
+            kr.subarray(32).fill(0);
+            return { cipherText, sharedSecret: kr.subarray(0, 32) };
+        },
+        decapsulate: (cipherText, secretKey) => {
+            ensureBytes(secretKey, secretKeyLen); // 768*k + 96
+            ensureBytes(cipherText, cipherTextLen); // 32(du*k + dv)
+            const [sk, publicKey, publicKeyHash, z] = secretCoder.decode(secretKey);
+            const msg = KPKE.decrypt(cipherText, sk);
+            const kr = HASH512.create().update(msg).update(publicKeyHash).digest(); // derive randomness, Khat, rHat = G(mHat || h)
+            const Khat = kr.subarray(0, 32);
+            const cipherText2 = KPKE.encrypt(publicKey, msg, kr.subarray(32, 64)); // re-encrypt using the derived randomness
+            const isValid = equalBytes(cipherText, cipherText2); // if ciphertexts do not match, "implicitly reject"
+            const Kbar = KDF.create({ dkLen: 32 }).update(z).update(cipherText).digest();
+            cleanBytes(msg, cipherText2, !isValid ? Khat : Kbar);
+            return isValid ? Khat : Kbar;
+        },
+    };
+}
+function shakePRF(dkLen, key, nonce) {
+    return shake256
+        .create({ dkLen })
+        .update(key)
+        .update(new Uint8Array([nonce]))
+        .digest();
+}
+const opts = {
+    HASH256: sha3_256,
+    HASH512: sha3_512,
+    KDF: shake256,
+    XOF: XOF128,
+    PRF: shakePRF,
+};
+/** ML-KEM-512 for 128-bit security level. Not recommended after 2030, as per ASD. */
+const ml_kem512 = createKyber({
+    ...opts,
+    ...PARAMS[512],
+});
+/** ML-KEM-768, for 192-bit security level. Not recommended after 2030, as per ASD. */
+const ml_kem768 = createKyber({
+    ...opts,
+    ...PARAMS[768],
+});
+/** ML-KEM-1024 for 256-bit security level. OK after 2030, as per ASD. */
+const ml_kem1024 = createKyber({
+    ...opts,
+    ...PARAMS[1024],
+});
+
+export default { 
+    ml_kem512,
+    ml_kem768,
+    ml_kem1024,
+    PARAMS
+};
+
+mldsa:
+/**
+ * ML-DSA: Module Lattice-based Digital Signature Algorithm from
+ * [FIPS-204](https://csrc.nist.gov/pubs/fips/204/ipd). A.k.a. CRYSTALS-Dilithium.
+ *
+ * Has similar internals to ML-KEM, but their keys and params are different.
+ * Check out [official site](https://www.pq-crystals.org/dilithium/index.shtml),
+ * [repo](https://github.com/pq-crystals/dilithium).
+ */
+/*! noble-post-quantum - MIT License (c) 2024 Paul Miller (paulmillr.com) */
+import { shake256 } from "@noble/hashes/sha3";
+import { genCrystals, XOF128, XOF256 } from "../utilities/_crystals.js";
+import { vecCoder, splitCoder, randomBytes, ensureBytes, equalBytes, cleanBytes, getMessage, EMPTY, getMessagePrehash } from "../utilities/utils.js";
+
+// Constants
+const N = 256;
+// 2**23 − 2**13 + 1, 23 bits: multiply will be 46. We have enough precision in JS to avoid bigints
+const Q = 8380417;
+const ROOT_OF_UNITY = 1753;
+// f = 256**−1 mod q, pow(256, -1, q) = 8347681 (python3)
+const F = 8347681;
+const D = 13;
+// Dilithium is kinda parametrized over GAMMA2, but everything will break with any other value.
+const GAMMA2_1 = Math.floor((Q - 1) / 88) | 0;
+const GAMMA2_2 = Math.floor((Q - 1) / 32) | 0;
+/** Internal params for different versions of ML-DSA  */
+// prettier-ignore
+const PARAMS = {
+    2: { K: 4, L: 4, D, GAMMA1: 2 ** 17, GAMMA2: GAMMA2_1, TAU: 39, ETA: 2, OMEGA: 80 },
+    3: { K: 6, L: 5, D, GAMMA1: 2 ** 19, GAMMA2: GAMMA2_2, TAU: 49, ETA: 4, OMEGA: 55 },
+    5: { K: 8, L: 7, D, GAMMA1: 2 ** 19, GAMMA2: GAMMA2_2, TAU: 60, ETA: 2, OMEGA: 75 },
+};
+const newPoly = (n) => new Int32Array(n);
+const { mod, smod, NTT, bitsCoder } = genCrystals({
+    N,
+    Q,
+    F,
+    ROOT_OF_UNITY,
+    newPoly,
+    isKyber: false,
+    brvBits: 8,
+});
+const id = (n) => n;
+const polyCoder = (d, compress = id, verify = id) => bitsCoder(d, {
+    encode: (i) => compress(verify(i)),
+    decode: (i) => verify(compress(i)),
+});
+const polyAdd = (a, b) => {
+    for (let i = 0; i < a.length; i++)
+        a[i] = mod(a[i] + b[i]);
+    return a;
+};
+const polySub = (a, b) => {
+    for (let i = 0; i < a.length; i++)
+        a[i] = mod(a[i] - b[i]);
+    return a;
+};
+const polyShiftl = (p) => {
+    for (let i = 0; i < N; i++)
+        p[i] <<= D;
+    return p;
+};
+const polyChknorm = (p, B) => {
+    // Not very sure about this, but FIPS204 doesn't provide any function for that :(
+    for (let i = 0; i < N; i++)
+        if (Math.abs(smod(p[i])) >= B)
+            return true;
+    return false;
+};
+const MultiplyNTTs = (a, b) => {
+    // NOTE: we don't use montgomery reduction in code, since it requires 64 bit ints,
+    // which is not available in JS. mod(a[i] * b[i]) is ok, since Q is 23 bit,
+    // which means a[i] * b[i] is 46 bit, which is safe to use in JS. (number is 53 bits).
+    // Barrett reduction is slower than mod :(
+    const c = newPoly(N);
+    for (let i = 0; i < a.length; i++)
+        c[i] = mod(a[i] * b[i]);
+    return c;
+};
+// Return poly in NTT representation
+function RejNTTPoly(xof) {
+    // Samples a polynomial ∈ Tq.
+    const r = newPoly(N);
+    // NOTE: we can represent 3xu24 as 4xu32, but it doesn't improve perf :(
+    for (let j = 0; j < N;) {
+        const b = xof();
+        if (b.length % 3)
+            throw new Error('RejNTTPoly: unaligned block');
+        for (let i = 0; j < N && i <= b.length - 3; i += 3) {
+            const t = (b[i + 0] | (b[i + 1] << 8) | (b[i + 2] << 16)) & 0x7fffff; // 3 bytes
+            if (t < Q)
+                r[j++] = t;
+        }
+    }
+    return r;
+}
+function getDilithium(opts) {
+    const { K, L, GAMMA1, GAMMA2, TAU, ETA, OMEGA } = opts;
+    const { CRH_BYTES, TR_BYTES, C_TILDE_BYTES, XOF128, XOF256 } = opts;
+    if (![2, 4].includes(ETA))
+        throw new Error('Wrong ETA');
+    if (![1 << 17, 1 << 19].includes(GAMMA1))
+        throw new Error('Wrong GAMMA1');
+    if (![GAMMA2_1, GAMMA2_2].includes(GAMMA2))
+        throw new Error('Wrong GAMMA2');
+    const BETA = TAU * ETA;
+    const decompose = (r) => {
+        // Decomposes r into (r1, r0) such that r ≡ r1(2γ2) + r0 mod q.
+        const rPlus = mod(r);
+        const r0 = smod(rPlus, 2 * GAMMA2) | 0;
+        if (rPlus - r0 === Q - 1)
+            return { r1: 0 | 0, r0: (r0 - 1) | 0 };
+        const r1 = Math.floor((rPlus - r0) / (2 * GAMMA2)) | 0;
+        return { r1, r0 }; // r1 = HighBits, r0 = LowBits
+    };
+    const HighBits = (r) => decompose(r).r1;
+    const LowBits = (r) => decompose(r).r0;
+    const MakeHint = (z, r) => {
+        // Compute hint bit indicating whether adding z to r alters the high bits of r.
+        // From dilithium code
+        const res0 = z <= GAMMA2 || z > Q - GAMMA2 || (z === Q - GAMMA2 && r === 0) ? 0 : 1;
+        // from FIPS204:
+        // // const r1 = HighBits(r);
+        // // const v1 = HighBits(r + z);
+        // // const res1 = +(r1 !== v1);
+        // But they return different results! However, decompose is same.
+        // So, either there is a bug in Dilithium ref implementation or in FIPS204.
+        // For now, lets use dilithium one, so test vectors can be passed.
+        // See
+        // https://github.com/GiacomoPope/dilithium-py?tab=readme-ov-file#optimising-decomposition-and-making-hints
+        return res0;
+    };
+    const UseHint = (h, r) => {
+        // Returns the high bits of r adjusted according to hint h
+        const m = Math.floor((Q - 1) / (2 * GAMMA2));
+        const { r1, r0 } = decompose(r);
+        // 3: if h = 1 and r0 > 0 return (r1 + 1) mod m
+        // 4: if h = 1 and r0 ≤ 0 return (r1 − 1) mod m
+        if (h === 1)
+            return r0 > 0 ? mod(r1 + 1, m) | 0 : mod(r1 - 1, m) | 0;
+        return r1 | 0;
+    };
+    const Power2Round = (r) => {
+        // Decomposes r into (r1, r0) such that r ≡ r1*(2**d) + r0 mod q.
+        const rPlus = mod(r);
+        const r0 = smod(rPlus, 2 ** D) | 0;
+        return { r1: Math.floor((rPlus - r0) / 2 ** D) | 0, r0 };
+    };
+    const hintCoder = {
+        bytesLen: OMEGA + K,
+        encode: (h) => {
+            if (h === false)
+                throw new Error('hint.encode: hint is false'); // should never happen
+            const res = new Uint8Array(OMEGA + K);
+            for (let i = 0, k = 0; i < K; i++) {
+                for (let j = 0; j < N; j++)
+                    if (h[i][j] !== 0)
+                        res[k++] = j;
+                res[OMEGA + i] = k;
+            }
+            return res;
+        },
+        decode: (buf) => {
+            const h = [];
+            let k = 0;
+            for (let i = 0; i < K; i++) {
+                const hi = newPoly(N);
+                if (buf[OMEGA + i] < k || buf[OMEGA + i] > OMEGA)
+                    return false;
+                for (let j = k; j < buf[OMEGA + i]; j++) {
+                    if (j > k && buf[j] <= buf[j - 1])
+                        return false;
+                    hi[buf[j]] = 1;
+                }
+                k = buf[OMEGA + i];
+                h.push(hi);
+            }
+            for (let j = k; j < OMEGA; j++)
+                if (buf[j] !== 0)
+                    return false;
+            return h;
+        },
+    };
+    const ETACoder = polyCoder(ETA === 2 ? 3 : 4, (i) => ETA - i, (i) => {
+        if (!(-ETA <= i && i <= ETA))
+            throw new Error(`malformed key s1/s3 ${i} outside of ETA range [${-ETA}, ${ETA}]`);
+        return i;
+    });
+    const T0Coder = polyCoder(13, (i) => (1 << (D - 1)) - i);
+    const T1Coder = polyCoder(10);
+    // Requires smod. Need to fix!
+    const ZCoder = polyCoder(GAMMA1 === 1 << 17 ? 18 : 20, (i) => smod(GAMMA1 - i));
+    const W1Coder = polyCoder(GAMMA2 === GAMMA2_1 ? 6 : 4);
+    const W1Vec = vecCoder(W1Coder, K);
+    // Main structures
+    const publicCoder = splitCoder(32, vecCoder(T1Coder, K));
+    const secretCoder = splitCoder(32, 32, TR_BYTES, vecCoder(ETACoder, L), vecCoder(ETACoder, K), vecCoder(T0Coder, K));
+    const sigCoder = splitCoder(C_TILDE_BYTES, vecCoder(ZCoder, L), hintCoder);
+    const CoefFromHalfByte = ETA === 2
+        ? (n) => (n < 15 ? 2 - (n % 5) : false)
+        : (n) => (n < 9 ? 4 - n : false);
+    // Return poly in NTT representation
+    function RejBoundedPoly(xof) {
+        // Samples an element a ∈ Rq with coeffcients in [−η, η] computed via rejection sampling from ρ.
+        const r = newPoly(N);
+        for (let j = 0; j < N;) {
+            const b = xof();
+            for (let i = 0; j < N && i < b.length; i += 1) {
+                // half byte. Should be superfast with vector instructions. But very slow with js :(
+                const d1 = CoefFromHalfByte(b[i] & 0x0f);
+                const d2 = CoefFromHalfByte((b[i] >> 4) & 0x0f);
+                if (d1 !== false)
+                    r[j++] = d1;
+                if (j < N && d2 !== false)
+                    r[j++] = d2;
+            }
+        }
+        return r;
+    }
+    const SampleInBall = (seed) => {
+        // Samples a polynomial c ∈ Rq with coeffcients from {−1, 0, 1} and Hamming weight τ
+        const pre = newPoly(N);
+        const s = shake256.create({}).update(seed);
+        const buf = new Uint8Array(shake256.blockLen);
+        s.xofInto(buf);
+        const masks = buf.slice(0, 8);
+        for (let i = N - TAU, pos = 8, maskPos = 0, maskBit = 0; i < N; i++) {
+            let b = i + 1;
+            for (; b > i;) {
+                b = buf[pos++];
+                if (pos < shake256.blockLen)
+                    continue;
+                s.xofInto(buf);
+                pos = 0;
+            }
+            pre[i] = pre[b];
+            pre[b] = 1 - (((masks[maskPos] >> maskBit++) & 1) << 1);
+            if (maskBit >= 8) {
+                maskPos++;
+                maskBit = 0;
+            }
+        }
+        return pre;
+    };
+    const polyPowerRound = (p) => {
+        const res0 = newPoly(N);
+        const res1 = newPoly(N);
+        for (let i = 0; i < p.length; i++) {
+            const { r0, r1 } = Power2Round(p[i]);
+            res0[i] = r0;
+            res1[i] = r1;
+        }
+        return { r0: res0, r1: res1 };
+    };
+    const polyUseHint = (u, h) => {
+        for (let i = 0; i < N; i++)
+            u[i] = UseHint(h[i], u[i]);
+        return u;
+    };
+    const polyMakeHint = (a, b) => {
+        const v = newPoly(N);
+        let cnt = 0;
+        for (let i = 0; i < N; i++) {
+            const h = MakeHint(a[i], b[i]);
+            v[i] = h;
+            cnt += h;
+        }
+        return { v, cnt };
+    };
+    const signRandBytes = 32;
+    const seedCoder = splitCoder(32, 64, 32);
+    // API & argument positions are exactly as in FIPS204.
+    const internal = {
+        signRandBytes,
+        keygen: (seed = randomBytes(32)) => {
+            // H(𝜉||IntegerToBytes(𝑘, 1)||IntegerToBytes(ℓ, 1), 128) 2: ▷ expand seed
+            const seedDst = new Uint8Array(32 + 2);
+            seedDst.set(seed);
+            seedDst[32] = K;
+            seedDst[33] = L;
+            const [rho, rhoPrime, K_] = seedCoder.decode((0, shake256)(seedDst, { dkLen: seedCoder.bytesLen }));
+            const xofPrime = XOF256(rhoPrime);
+            const s1 = [];
+            for (let i = 0; i < L; i++)
+                s1.push(RejBoundedPoly(xofPrime.get(i & 0xff, (i >> 8) & 0xff)));
+            const s2 = [];
+            for (let i = L; i < L + K; i++)
+                s2.push(RejBoundedPoly(xofPrime.get(i & 0xff, (i >> 8) & 0xff)));
+            const s1Hat = s1.map((i) => NTT.encode(i.slice()));
+            const t0 = [];
+            const t1 = [];
+            const xof = XOF128(rho);
+            const t = newPoly(N);
+            for (let i = 0; i < K; i++) {
+                // t ← NTT−1(A*NTT(s1)) + s2
+                t.fill(0); // don't-reallocate
+                for (let j = 0; j < L; j++) {
+                    const aij = RejNTTPoly(xof.get(j, i)); // super slow!
+                    polyAdd(t, MultiplyNTTs(aij, s1Hat[j]));
+                }
+                NTT.decode(t);
+                const { r0, r1 } = polyPowerRound(polyAdd(t, s2[i])); // (t1, t0) ← Power2Round(t, d)
+                t0.push(r0);
+                t1.push(r1);
+            }
+            const publicKey = publicCoder.encode([rho, t1]); // pk ← pkEncode(ρ, t1)
+            const tr = (0, shake256)(publicKey, { dkLen: TR_BYTES }); // tr ← H(BytesToBits(pk), 512)
+            const secretKey = secretCoder.encode([rho, K_, tr, s1, s2, t0]); // sk ← skEncode(ρ, K,tr, s1, s2, t0)
+            xof.clean();
+            xofPrime.clean();
+            // STATS
+            // Kyber512:  { calls: 4, xofs: 12 }, Kyber768: { calls: 9, xofs: 27 }, Kyber1024: { calls: 16, xofs: 48 }
+            // DSA44:    { calls: 24, xofs: 24 }, DSA65:    { calls: 41, xofs: 41 }, DSA87:    { calls: 71, xofs: 71 }
+            (0, cleanBytes)(rho, rhoPrime, K_, s1, s2, s1Hat, t, t0, t1, tr, seedDst);
+            return { publicKey, secretKey };
+        },
+        // NOTE: random is optional.
+        sign: (secretKey, msg, random, externalMu = false) => {
+            // This part can be pre-cached per secretKey, but there is only minor performance improvement,
+            // since we re-use a lot of variables to computation.
+            const [rho, _K, tr, s1, s2, t0] = secretCoder.decode(secretKey); // (ρ, K,tr, s1, s2, t0) ← skDecode(sk)
+            // Cache matrix to avoid re-compute later
+            const A = []; // A ← ExpandA(ρ)
+            const xof = XOF128(rho);
+            for (let i = 0; i < K; i++) {
+                const pv = [];
+                for (let j = 0; j < L; j++)
+                    pv.push(RejNTTPoly(xof.get(j, i)));
+                A.push(pv);
+            }
+            xof.clean();
+            for (let i = 0; i < L; i++)
+                NTT.encode(s1[i]); // sˆ1 ← NTT(s1)
+            for (let i = 0; i < K; i++) {
+                NTT.encode(s2[i]); // sˆ2 ← NTT(s2)
+                NTT.encode(t0[i]); // tˆ0 ← NTT(t0)
+            }
+            // This part is per msg
+            const mu = externalMu
+                ? msg
+                : shake256.create({ dkLen: CRH_BYTES }).update(tr).update(msg).digest(); // 6: µ ← H(tr||M, 512) ▷ Compute message representative µ
+            // Compute private random seed
+            const rnd = random ? random : new Uint8Array(32);
+            (0, ensureBytes)(rnd);
+            const rhoprime = shake256
+                .create({ dkLen: CRH_BYTES })
+                .update(_K)
+                .update(rnd)
+                .update(mu)
+                .digest(); // ρ′← H(K||rnd||µ, 512)
+            (0, ensureBytes)(rhoprime, CRH_BYTES);
+            const x256 = XOF256(rhoprime, ZCoder.bytesLen);
+            //  Rejection sampling loop
+            main_loop: for (let kappa = 0;;) {
+                const y = [];
+                // y ← ExpandMask(ρ , κ)
+                for (let i = 0; i < L; i++, kappa++)
+                    y.push(ZCoder.decode(x256.get(kappa & 0xff, kappa >> 8)()));
+                const z = y.map((i) => NTT.encode(i.slice()));
+                const w = [];
+                for (let i = 0; i < K; i++) {
+                    // w ← NTT−1(A ◦ NTT(y))
+                    const wi = newPoly(N);
+                    for (let j = 0; j < L; j++)
+                        polyAdd(wi, MultiplyNTTs(A[i][j], z[j]));
+                    NTT.decode(wi);
+                    w.push(wi);
+                }
+                const w1 = w.map((j) => j.map(HighBits)); // w1 ← HighBits(w)
+                // Commitment hash: c˜ ∈{0, 1 2λ } ← H(µ||w1Encode(w1), 2λ)
+                const cTilde = shake256
+                    .create({ dkLen: C_TILDE_BYTES })
+                    .update(mu)
+                    .update(W1Vec.encode(w1))
+                    .digest();
+                // Verifer's challenge
+                const cHat = NTT.encode(SampleInBall(cTilde)); // c ← SampleInBall(c˜1); cˆ ← NTT(c)
+                // ⟨⟨cs1⟩⟩ ← NTT−1(cˆ◦ sˆ1)
+                const cs1 = s1.map((i) => MultiplyNTTs(i, cHat));
+                for (let i = 0; i < L; i++) {
+                    polyAdd(NTT.decode(cs1[i]), y[i]); // z ← y + ⟨⟨cs1⟩⟩
+                    if (polyChknorm(cs1[i], GAMMA1 - BETA))
+                        continue main_loop; // ||z||∞ ≥ γ1 − β
+                }
+                // cs1 is now z (▷ Signer's response)
+                let cnt = 0;
+                const h = [];
+                for (let i = 0; i < K; i++) {
+                    const cs2 = NTT.decode(MultiplyNTTs(s2[i], cHat)); // ⟨⟨cs2⟩⟩ ← NTT−1(cˆ◦ sˆ2)
+                    const r0 = polySub(w[i], cs2).map(LowBits); // r0 ← LowBits(w − ⟨⟨cs2⟩⟩)
+                    if (polyChknorm(r0, GAMMA2 - BETA))
+                        continue main_loop; // ||r0||∞ ≥ γ2 − β
+                    const ct0 = NTT.decode(MultiplyNTTs(t0[i], cHat)); // ⟨⟨ct0⟩⟩ ← NTT−1(cˆ◦ tˆ0)
+                    if (polyChknorm(ct0, GAMMA2))
+                        continue main_loop;
+                    polyAdd(r0, ct0);
+                    // ▷ Signer's hint
+                    const hint = polyMakeHint(r0, w1[i]); // h ← MakeHint(−⟨⟨ct0⟩⟩, w− ⟨⟨cs2⟩⟩ + ⟨⟨ct0⟩⟩)
+                    h.push(hint.v);
+                    cnt += hint.cnt;
+                }
+                if (cnt > OMEGA)
+                    continue; // the number of 1's in h is greater than ω
+                x256.clean();
+                const res = sigCoder.encode([cTilde, cs1, h]); // σ ← sigEncode(c˜, z mod±q, h)
+                // rho, _K, tr is subarray of secretKey, cannot clean.
+                (0, cleanBytes)(cTilde, cs1, h, cHat, w1, w, z, y, rhoprime, mu, s1, s2, t0, ...A);
+                return res;
+            }
+            // @ts-ignore
+            throw new Error('Unreachable code path reached, report this error');
+        },
+        verify: (publicKey, msg, sig, externalMu = false) => {
+            // ML-DSA.Verify(pk, M, σ): Verifes a signature σ for a message M.
+            const [rho, t1] = publicCoder.decode(publicKey); // (ρ, t1) ← pkDecode(pk)
+            const tr = (0, shake256)(publicKey, { dkLen: TR_BYTES }); // 6: tr ← H(BytesToBits(pk), 512)
+            if (sig.length !== sigCoder.bytesLen)
+                return false; // return false instead of exception
+            const [cTilde, z, h] = sigCoder.decode(sig); // (c˜, z, h) ← sigDecode(σ), ▷ Signer's commitment hash c ˜, response z and hint
+            if (h === false)
+                return false; // if h = ⊥ then return false
+            for (let i = 0; i < L; i++)
+                if (polyChknorm(z[i], GAMMA1 - BETA))
+                    return false;
+            const mu = externalMu
+                ? msg
+                : shake256.create({ dkLen: CRH_BYTES }).update(tr).update(msg).digest(); // 7: µ ← H(tr||M, 512)
+            // Compute verifer's challenge from c˜
+            const c = NTT.encode(SampleInBall(cTilde)); // c ← SampleInBall(c˜1)
+            const zNtt = z.map((i) => i.slice()); // zNtt = NTT(z)
+            for (let i = 0; i < L; i++)
+                NTT.encode(zNtt[i]);
+            const wTick1 = [];
+            const xof = XOF128(rho);
+            for (let i = 0; i < K; i++) {
+                const ct12d = MultiplyNTTs(NTT.encode(polyShiftl(t1[i])), c); //c * t1 * (2**d)
+                const Az = newPoly(N); // // A * z
+                for (let j = 0; j < L; j++) {
+                    const aij = RejNTTPoly(xof.get(j, i)); // A[i][j] inplace
+                    polyAdd(Az, MultiplyNTTs(aij, zNtt[j]));
+                }
+                // wApprox = A*z - c*t1 * (2**d)
+                const wApprox = NTT.decode(polySub(Az, ct12d));
+                // Reconstruction of signer's commitment
+                wTick1.push(polyUseHint(wApprox, h[i])); // w ′ ← UseHint(h, w'approx )
+            }
+            xof.clean();
+            // c˜′← H (µ||w1Encode(w′1), 2λ),  Hash it; this should match c˜
+            const c2 = shake256
+                .create({ dkLen: C_TILDE_BYTES })
+                .update(mu)
+                .update(W1Vec.encode(wTick1))
+                .digest();
+            // Additional checks in FIPS-204:
+            // [[ ||z||∞ < γ1 − β ]] and [[c ˜ = c˜′]] and [[number of 1's in h is ≤ ω]]
+            for (const t of h) {
+                const sum = t.reduce((acc, i) => acc + i, 0);
+                if (!(sum <= OMEGA))
+                    return false;
+            }
+            for (const t of z)
+                if (polyChknorm(t, GAMMA1 - BETA))
+                    return false;
+            return (0, equalBytes)(cTilde, c2);
+        },
+    };
+    return {
+        internal,
+        keygen: internal.keygen,
+        signRandBytes: internal.signRandBytes,
+        sign: (secretKey, msg, ctx = EMPTY, random) => {
+            const M = getMessage(msg, ctx);
+            const res = internal.sign(secretKey, M, random);
+            M.fill(0);
+            return res;
+        },
+        verify: (publicKey, msg, sig, ctx = EMPTY) => {
+            return internal.verify(publicKey, getMessage(msg, ctx), sig);
+        },
+        prehash: (hashName) => ({
+            sign: (secretKey, msg, ctx = EMPTY, random) => {
+                const M = getMessagePrehash(hashName, msg, ctx);
+                const res = internal.sign(secretKey, M, random);
+                M.fill(0);
+                return res;
+            },
+            verify: (publicKey, msg, sig, ctx = EMPTY) => {
+                return internal.verify(publicKey, getMessagePrehash(hashName, msg, ctx), sig);
+            },
+        }),
+    };
+}
+/** ML-DSA-44 for 128-bit security level. Not recommended after 2030, as per ASD. */
+const ml_dsa44 = getDilithium({
+    ...PARAMS[2],
+    CRH_BYTES: 64,
+    TR_BYTES: 64,
+    C_TILDE_BYTES: 32,
+    XOF128,
+    XOF256,
+});
+/** ML-DSA-65 for 192-bit security level. Not recommended after 2030, as per ASD. */
+const ml_dsa65 = getDilithium({
+    ...PARAMS[3],
+    CRH_BYTES: 64,
+    TR_BYTES: 64,
+    C_TILDE_BYTES: 48,
+    XOF128,
+    XOF256,
+});
+/** ML-DSA-87 for 256-bit security level. OK after 2030, as per ASD. */
+const ml_dsa87 = getDilithium({
+    ...PARAMS[5],
+    CRH_BYTES: 64,
+    TR_BYTES: 64,
+    C_TILDE_BYTES: 64,
+    XOF128,
+    XOF256,
+});
+
+export default {
+    ml_dsa44,
+    ml_dsa65,
+    ml_dsa87,
+    PARAMS
+};
+
+
+slhdsa:
+/**
+ * SLH-DSA: StateLess Hash-based Digital Signature Standard from
+ * [FIPS-205](https://csrc.nist.gov/pubs/fips/205/ipd). A.k.a. Sphincs+ v3.1.
+ *
+ * There are many different kinds of SLH, but basically `sha2` / `shake` indicate internal hash,
+ * `128` / `192` / `256` indicate security level, and `s` /`f` indicate trade-off (Small / Fast).
+ *
+ * Hashes function similarly to signatures. You hash a private key to get a public key,
+ * which can be used to verify the private key. However, this only works once since
+ * disclosing the pre-image invalidates the key.
+ *
+ * To address the "one-time" limitation, we can use a Merkle tree root hash:
+ * h(h(h(0) || h(1)) || h(h(2) || h(3))))
+ *
+ * This allows us to have the same public key output from the hash, but disclosing one
+ * path in the tree doesn't invalidate the others. By choosing a path related to the
+ * message, we can "sign" it.
+ *
+ * Limitation: Only a fixed number of signatures can be made. For instance, a Merkle tree
+ * with depth 8 allows 256 distinct messages. Using different trees for each node can
+ * prevent forgeries, but the key will still degrade over time.
+ *
+ * WOTS: One-time signatures (can be forged if same key used twice).
+ * FORS: Forest of Random Subsets
+ *
+ * Check out [official site](https://sphincs.org) & [repo](https://github.com/sphincs/sphincsplus).
+ */
+import * as md from "@noble/hashes/_md";
+import { hmac, HMAC } from "@noble/hashes/hmac";
+import { sha256, sha224, sha384, sha512, sha512_224, sha512_256 } from "@noble/hashes/sha2";
+import { sha3_224, sha3_256, sha3_384, sha3_512, shake128, shake256 } from "@noble/hashes/sha3";
+import { hexToBytes, concatBytes, bytesToHex, createView } from "@noble/hashes/utils";
+import { getMessage, getMessagePrehash, EMPTY, randomBytes, ensureBytes, splitCoder, equalBytes, cleanBytes, getMask, vecCoder, utf8ToBytes } from "../utilities/utils.js";
+/** Winternitz signature params. */
+const PARAMS = {
+    '128f': { W: 16, N: 16, H: 66, D: 22, K: 33, A: 6 },
+    '128s': { W: 16, N: 16, H: 63, D: 7, K: 14, A: 12 },
+    '192f': { W: 16, N: 24, H: 66, D: 22, K: 33, A: 8 },
+    '192s': { W: 16, N: 24, H: 63, D: 7, K: 17, A: 14 },
+    '256f': { W: 16, N: 32, H: 68, D: 17, K: 35, A: 9 },
+    '256s': { W: 16, N: 32, H: 64, D: 8, K: 22, A: 14 },
+};
+const AddressType = {
+    WOTS: 0,
+    WOTSPK: 1,
+    HASHTREE: 2,
+    FORSTREE: 3,
+    FORSPK: 4,
+    WOTSPRF: 5,
+    FORSPRF: 6,
+};
+function hexToNumber(hex) {
+    if (typeof hex !== 'string')
+        throw new Error('hex string expected, got ' + typeof hex);
+    return BigInt(hex === '' ? '0' : '0x' + hex); // Big Endian
+}
+// BE: Big Endian, LE: Little Endian
+function bytesToNumberBE(bytes) {
+    return hexToNumber(bytesToHex(bytes));
+}
+function numberToBytesBE(n, len) {
+    return hexToBytes(n.toString(16).padStart(len * 2, '0'));
+}
+// Same as bitsCoder.decode, but maybe spec will change and unify with base2bBE.
+const base2b = (outLen, b) => {
+    const mask = getMask(b);
+    return (bytes) => {
+        const baseB = new Uint32Array(outLen);
+        for (let out = 0, pos = 0, bits = 0, total = 0; out < outLen; out++) {
+            while (bits < b) {
+                total = (total << 8) | bytes[pos++];
+                bits += 8;
+            }
+            bits -= b;
+            baseB[out] = (total >>> bits) & mask;
+        }
+        return baseB;
+    };
+};
+function getMaskBig(bits) {
+    return (1n << BigInt(bits)) - 1n; // 4 -> 0b1111
+}
+function gen(opts, hashOpts) {
+    const { N, W, H, D, K, A } = opts;
+    const getContext = hashOpts.getContext(opts);
+    if (W !== 16)
+        throw new Error('Unsupported Winternitz parameter');
+    const WOTS_LOGW = 4;
+    const WOTS_LEN1 = Math.floor((8 * N) / WOTS_LOGW);
+    const WOTS_LEN2 = N <= 8 ? 2 : N <= 136 ? 3 : 4;
+    const TREE_HEIGHT = Math.floor(H / D);
+    const WOTS_LEN = WOTS_LEN1 + WOTS_LEN2;
+    let ADDR_BYTES = 22;
+    let OFFSET_LAYER = 0;
+    let OFFSET_TREE = 1;
+    let OFFSET_TYPE = 9;
+    let OFFSET_KP_ADDR2 = 12;
+    let OFFSET_KP_ADDR1 = 13;
+    let OFFSET_CHAIN_ADDR = 17;
+    let OFFSET_TREE_INDEX = 18;
+    let OFFSET_HASH_ADDR = 21;
+    if (!hashOpts.isCompressed) {
+        ADDR_BYTES = 32;
+        OFFSET_LAYER += 3;
+        OFFSET_TREE += 7;
+        OFFSET_TYPE += 10;
+        OFFSET_KP_ADDR2 += 10;
+        OFFSET_KP_ADDR1 += 10;
+        OFFSET_CHAIN_ADDR += 10;
+        OFFSET_TREE_INDEX += 10;
+        OFFSET_HASH_ADDR += 10;
+    }
+    const setAddr = (opts, addr = new Uint8Array(ADDR_BYTES)) => {
+        const { type, height, tree, layer, index, chain, hash, keypair } = opts;
+        const { subtreeAddr, keypairAddr } = opts;
+        const v = createView(addr);
+        if (height !== undefined)
+            addr[OFFSET_CHAIN_ADDR] = height;
+        if (layer !== undefined)
+            addr[OFFSET_LAYER] = layer;
+        if (type !== undefined)
+            addr[OFFSET_TYPE] = type;
+        if (chain !== undefined)
+            addr[OFFSET_CHAIN_ADDR] = chain;
+        if (hash !== undefined)
+            addr[OFFSET_HASH_ADDR] = hash;
+        if (index !== undefined)
+            v.setUint32(OFFSET_TREE_INDEX, index, false);
+        if (subtreeAddr)
+            addr.set(subtreeAddr.subarray(0, OFFSET_TREE + 8));
+        if (tree !== undefined)
+            md.setBigUint64(v, OFFSET_TREE, tree, false);
+        if (keypair !== undefined) {
+            addr[OFFSET_KP_ADDR1] = keypair;
+            if (TREE_HEIGHT > 8)
+                addr[OFFSET_KP_ADDR2] = keypair >>> 8;
+        }
+        if (keypairAddr) {
+            addr.set(keypairAddr.subarray(0, OFFSET_TREE + 8));
+            addr[OFFSET_KP_ADDR1] = keypairAddr[OFFSET_KP_ADDR1];
+            if (TREE_HEIGHT > 8)
+                addr[OFFSET_KP_ADDR2] = keypairAddr[OFFSET_KP_ADDR2];
+        }
+        return addr;
+    };
+    const chainCoder = base2b(WOTS_LEN2, WOTS_LOGW);
+    const chainLengths = (msg) => {
+        const W1 = base2b(WOTS_LEN1, WOTS_LOGW)(msg);
+        let csum = 0;
+        for (let i = 0; i < W1.length; i++)
+            csum += W - 1 - W1[i]; // ▷ Compute checksum
+        csum <<= (8 - ((WOTS_LEN2 * WOTS_LOGW) % 8)) % 8; // csum ← csum ≪ ((8 − ((len2 · lg(w)) mod 8)) mod 8
+        // Checksum to base(LOG_W)
+        const W2 = chainCoder(numberToBytesBE(csum, Math.ceil((WOTS_LEN2 * WOTS_LOGW) / 8)));
+        // W1 || W2 (concatBytes cannot concat TypedArrays)
+        const lengths = new Uint32Array(WOTS_LEN);
+        lengths.set(W1);
+        lengths.set(W2, W1.length);
+        return lengths;
+    };
+    const messageToIndices = base2b(K, A);
+    const TREE_BITS = TREE_HEIGHT * (D - 1);
+    const LEAF_BITS = TREE_HEIGHT;
+    const hashMsgCoder = splitCoder(Math.ceil((A * K) / 8), Math.ceil(TREE_BITS / 8), Math.ceil(TREE_HEIGHT / 8));
+    const hashMessage = (R, pkSeed, msg, context) => {
+        const digest = context.Hmsg(R, pkSeed, msg, hashMsgCoder.bytesLen); // digest ← Hmsg(R, PK.seed, PK.root, M)
+        const [md, tmpIdxTree, tmpIdxLeaf] = hashMsgCoder.decode(digest);
+        const tree = bytesToNumberBE(tmpIdxTree) & getMaskBig(TREE_BITS);
+        const leafIdx = Number(bytesToNumberBE(tmpIdxLeaf)) & getMask(LEAF_BITS);
+        return { tree, leafIdx, md };
+    };
+    const treehash = (height, fn) => function treehash_i(context, leafIdx, idxOffset, treeAddr, info) {
+        const maxIdx = (1 << height) - 1;
+        const stack = new Uint8Array(height * N);
+        const authPath = new Uint8Array(height * N);
+        for (let idx = 0;; idx++) {
+            const current = new Uint8Array(2 * N);
+            const cur0 = current.subarray(0, N);
+            const cur1 = current.subarray(N);
+            const addrOffset = idx + idxOffset;
+            cur1.set(fn(leafIdx, addrOffset, context, info));
+            let h = 0;
+            for (let i = idx, o = idxOffset, l = leafIdx;; h++, i >>>= 1, l >>>= 1, o >>>= 1) {
+                if (h === height)
+                    return { root: cur1, authPath }; // Returns from here
+                if ((i ^ l) === 1)
+                    authPath.subarray(h * N).set(cur1); // authPath.push(cur1)
+                if ((i & 1) === 0 && idx < maxIdx)
+                    break;
+                setAddr({ height: h + 1, index: (i >> 1) + (o >> 1) }, treeAddr);
+                cur0.set(stack.subarray(h * N).subarray(0, N));
+                cur1.set(context.thashN(2, current, treeAddr));
+            }
+            stack.subarray(h * N).set(cur1); // stack.push(cur1)
+        }
+        // @ts-ignore
+        throw new Error('Unreachable code path reached, report this error');
+    };
+    const wotsTreehash = treehash(TREE_HEIGHT, (leafIdx, addrOffset, context, info) => {
+        const wotsPk = new Uint8Array(WOTS_LEN * N);
+        const wotsKmask = addrOffset === leafIdx ? 0 : ~0 >>> 0;
+        setAddr({ keypair: addrOffset }, info.leafAddr);
+        setAddr({ keypair: addrOffset }, info.pkAddr);
+        for (let i = 0; i < WOTS_LEN; i++) {
+            const wotsK = info.wotsSteps[i] | wotsKmask;
+            const pk = wotsPk.subarray(i * N, (i + 1) * N);
+            setAddr({ chain: i, hash: 0, type: AddressType.WOTSPRF }, info.leafAddr);
+            pk.set(context.PRFaddr(info.leafAddr));
+            setAddr({ type: AddressType.WOTS }, info.leafAddr);
+            for (let k = 0;; k++) {
+                if (k === wotsK)
+                    info.wotsSig.subarray(i * N).set(pk); //wotsSig.push()
+                if (k === W - 1)
+                    break;
+                setAddr({ hash: k }, info.leafAddr);
+                pk.set(context.thash1(pk, info.leafAddr));
+            }
+        }
+        return context.thashN(WOTS_LEN, wotsPk, info.pkAddr);
+    });
+    const forsTreehash = treehash(A, (_, addrOffset, context, forsLeafAddr) => {
+        setAddr({ type: AddressType.FORSPRF, index: addrOffset }, forsLeafAddr);
+        const prf = context.PRFaddr(forsLeafAddr);
+        setAddr({ type: AddressType.FORSTREE }, forsLeafAddr);
+        return context.thash1(prf, forsLeafAddr);
+    });
+    const merkleSign = (context, wotsAddr, treeAddr, leafIdx, prevRoot = new Uint8Array(N)) => {
+        setAddr({ type: AddressType.HASHTREE }, treeAddr);
+        // State variables
+        const info = {
+            wotsSig: new Uint8Array(wotsCoder.bytesLen),
+            wotsSteps: chainLengths(prevRoot),
+            leafAddr: setAddr({ subtreeAddr: wotsAddr }),
+            pkAddr: setAddr({ type: AddressType.WOTSPK, subtreeAddr: wotsAddr }),
+        };
+        const { root, authPath } = wotsTreehash(context, leafIdx, 0, treeAddr, info);
+        return {
+            root,
+            sigWots: info.wotsSig.subarray(0, WOTS_LEN * N),
+            sigAuth: authPath,
+        };
+    };
+    const computeRoot = (leaf, leafIdx, idxOffset, authPath, treeHeight, context, addr) => {
+        const buffer = new Uint8Array(2 * N);
+        const b0 = buffer.subarray(0, N);
+        const b1 = buffer.subarray(N, 2 * N);
+        // First iter
+        if ((leafIdx & 1) !== 0) {
+            b1.set(leaf.subarray(0, N));
+            b0.set(authPath.subarray(0, N));
+        }
+        else {
+            b0.set(leaf.subarray(0, N));
+            b1.set(authPath.subarray(0, N));
+        }
+        leafIdx >>>= 1;
+        idxOffset >>>= 1;
+        // Rest
+        for (let i = 0; i < treeHeight - 1; i++, leafIdx >>= 1, idxOffset >>= 1) {
+            setAddr({ height: i + 1, index: leafIdx + idxOffset }, addr);
+            const a = authPath.subarray((i + 1) * N, (i + 2) * N);
+            if ((leafIdx & 1) !== 0) {
+                b1.set(context.thashN(2, buffer, addr));
+                b0.set(a);
+            }
+            else {
+                buffer.set(context.thashN(2, buffer, addr));
+                b1.set(a);
+            }
+        }
+        // Root
+        setAddr({ height: treeHeight, index: leafIdx + idxOffset }, addr);
+        return context.thashN(2, buffer, addr);
+    };
+    const seedCoder = splitCoder(N, N, N);
+    const publicCoder = splitCoder(N, N);
+    const secretCoder = splitCoder(N, N, publicCoder.bytesLen);
+    const forsCoder = vecCoder(splitCoder(N, N * A), K);
+    const wotsCoder = vecCoder(splitCoder(WOTS_LEN * N, TREE_HEIGHT * N), D);
+    const sigCoder = splitCoder(N, forsCoder, wotsCoder); // random || fors || wots
+    const internal = {
+        signRandBytes: N,
+        keygen(seed = randomBytes(seedCoder.bytesLen)) {
+            // Set SK.seed, SK.prf, and PK.seed to random n-byte
+            const [secretSeed, secretPRF, publicSeed] = seedCoder.decode(seed);
+            const context = getContext(publicSeed, secretSeed);
+            // ADRS.setLayerAddress(d − 1)
+            const topTreeAddr = setAddr({ layer: D - 1 });
+            const wotsAddr = setAddr({ layer: D - 1 });
+            //PK.root ←_xmss node(SK.seed, 0, h′, PK.seed, ADRS)
+            const { root } = merkleSign(context, wotsAddr, topTreeAddr, ~0 >>> 0);
+            const publicKey = publicCoder.encode([publicSeed, root]);
+            const secretKey = secretCoder.encode([secretSeed, secretPRF, publicKey]);
+            context.clean();
+            cleanBytes(secretSeed, secretPRF, root, wotsAddr, topTreeAddr);
+            return { publicKey, secretKey };
+        },
+        sign: (sk, msg, random) => {
+            const [skSeed, skPRF, pk] = secretCoder.decode(sk); // todo: fix
+            const [pkSeed, _] = publicCoder.decode(pk);
+            // Set opt_rand to either PK.seed or to a random n-byte string
+            if (!random)
+                random = pkSeed.slice();
+            ensureBytes(random, N);
+            const context = getContext(pkSeed, skSeed);
+            // Generate randomizer
+            const R = context.PRFmsg(skPRF, random, msg); // R ← PRFmsg(SK.prf, opt_rand, M)
+            let { tree, leafIdx, md } = hashMessage(R, pk, msg, context);
+            // Create FORS signatures
+            const wotsAddr = setAddr({
+                type: AddressType.WOTS,
+                tree,
+                keypair: leafIdx,
+            });
+            const roots = [];
+            const forsLeaf = setAddr({ keypairAddr: wotsAddr });
+            const forsTreeAddr = setAddr({ keypairAddr: wotsAddr });
+            const indices = messageToIndices(md);
+            const fors = [];
+            for (let i = 0; i < indices.length; i++) {
+                const idxOffset = i << A;
+                setAddr({
+                    type: AddressType.FORSPRF,
+                    height: 0,
+                    index: indices[i] + idxOffset,
+                }, forsTreeAddr);
+                const prf = context.PRFaddr(forsTreeAddr);
+                setAddr({ type: AddressType.FORSTREE }, forsTreeAddr);
+                const { root, authPath } = forsTreehash(context, indices[i], idxOffset, forsTreeAddr, forsLeaf);
+                roots.push(root);
+                fors.push([prf, authPath]);
+            }
+            const forsPkAddr = setAddr({
+                type: AddressType.FORSPK,
+                keypairAddr: wotsAddr,
+            });
+            const root = context.thashN(K, concatBytes(...roots), forsPkAddr);
+            // WOTS signatures
+            const treeAddr = setAddr({ type: AddressType.HASHTREE });
+            const wots = [];
+            for (let i = 0; i < D; i++, tree >>= BigInt(TREE_HEIGHT)) {
+                setAddr({ tree, layer: i }, treeAddr);
+                setAddr({ subtreeAddr: treeAddr, keypair: leafIdx }, wotsAddr);
+                const { sigWots, sigAuth, root: r, } = merkleSign(context, wotsAddr, treeAddr, leafIdx, root);
+                root.set(r);
+                r.fill(0);
+                wots.push([sigWots, sigAuth]);
+                leafIdx = Number(tree & getMaskBig(TREE_HEIGHT));
+            }
+            context.clean();
+            const SIG = sigCoder.encode([R, fors, wots]);
+            cleanBytes(R, random, treeAddr, wotsAddr, forsLeaf, forsTreeAddr, indices, roots);
+            return SIG;
+        },
+        verify: (publicKey, msg, sig) => {
+            const [pkSeed, pubRoot] = publicCoder.decode(publicKey);
+            const [random, forsVec, wotsVec] = sigCoder.decode(sig);
+            const pk = publicKey;
+            if (sig.length !== sigCoder.bytesLen)
+                return false;
+            const context = getContext(pkSeed);
+            let { tree, leafIdx, md } = hashMessage(random, pk, msg, context);
+            const wotsAddr = setAddr({
+                type: AddressType.WOTS,
+                tree,
+                keypair: leafIdx,
+            });
+            // FORS signature
+            const roots = [];
+            const forsTreeAddr = setAddr({
+                type: AddressType.FORSTREE,
+                keypairAddr: wotsAddr,
+            });
+            const indices = messageToIndices(md);
+            for (let i = 0; i < forsVec.length; i++) {
+                const [prf, authPath] = forsVec[i];
+                const idxOffset = i << A;
+                setAddr({ height: 0, index: indices[i] + idxOffset }, forsTreeAddr);
+                const leaf = context.thash1(prf, forsTreeAddr);
+                // Compute inplace, because we need all roots in same byte array
+                roots.push(computeRoot(leaf, indices[i], idxOffset, authPath, A, context, forsTreeAddr));
+            }
+            const forsPkAddr = setAddr({
+                type: AddressType.FORSPK,
+                keypairAddr: wotsAddr,
+            });
+            let root = context.thashN(K, concatBytes(...roots), forsPkAddr); // root = thash()
+            // WOTS signature
+            const treeAddr = setAddr({ type: AddressType.HASHTREE });
+            const wotsPkAddr = setAddr({ type: AddressType.WOTSPK });
+            const wotsPk = new Uint8Array(WOTS_LEN * N);
+            for (let i = 0; i < wotsVec.length; i++, tree >>= BigInt(TREE_HEIGHT)) {
+                const [wots, sigAuth] = wotsVec[i];
+                setAddr({ tree, layer: i }, treeAddr);
+                setAddr({ subtreeAddr: treeAddr, keypair: leafIdx }, wotsAddr);
+                setAddr({ keypairAddr: wotsAddr }, wotsPkAddr);
+                const lengths = chainLengths(root);
+                for (let i = 0; i < WOTS_LEN; i++) {
+                    setAddr({ chain: i }, wotsAddr);
+                    const steps = W - 1 - lengths[i];
+                    const start = lengths[i];
+                    const out = wotsPk.subarray(i * N);
+                    out.set(wots.subarray(i * N, (i + 1) * N));
+                    for (let j = start; j < start + steps && j < W; j++) {
+                        setAddr({ hash: j }, wotsAddr);
+                        out.set(context.thash1(out, wotsAddr));
+                    }
+                }
+                const leaf = context.thashN(WOTS_LEN, wotsPk, wotsPkAddr);
+                root = computeRoot(leaf, leafIdx, 0, sigAuth, TREE_HEIGHT, context, treeAddr);
+                leafIdx = Number(tree & getMaskBig(TREE_HEIGHT));
+            }
+            return equalBytes(root, pubRoot);
+        },
+    };
+    return {
+        internal,
+        seedLen: seedCoder.bytesLen,
+        keygen: internal.keygen,
+        signRandBytes: internal.signRandBytes,
+        sign: (secretKey, msg, ctx = EMPTY, random) => {
+            const M = getMessage(msg, ctx);
+            const res = internal.sign(secretKey, M, random);
+            M.fill(0);
+            return res;
+        },
+        verify: (publicKey, msg, sig, ctx = EMPTY) => {
+            return internal.verify(publicKey, getMessage(msg, ctx), sig);
+        },
+        prehash: (hashName) => ({
+            seedLen: seedCoder.bytesLen,
+            keygen: internal.keygen,
+            signRandBytes: internal.signRandBytes,
+            sign: (secretKey, msg, ctx = EMPTY, random) => {
+                const M = getMessagePrehash(hashName, msg, ctx);
+                const res = internal.sign(secretKey, M, random);
+                M.fill(0);
+                return res;
+            },
+            verify: (publicKey, msg, sig, ctx = EMPTY) => {
+                return internal.verify(publicKey, getMessagePrehash(hashName, msg, ctx), sig);
+            },
+        }),
+    };
+}
+const genShake = () => (opts) => (pubSeed, skSeed) => {
+    const { N } = opts;
+    const stats = { prf: 0, thash: 0, hmsg: 0, gen_message_random: 0 };
+    const h0 = shake256.create({}).update(pubSeed);
+    const h0tmp = h0.clone();
+    const h1 = shake256;
+    const thash = (blocks, input, addr) => {
+        stats.thash++;
+        return h0
+            ._cloneInto(h0tmp)
+            .update(addr)
+            .update(input.subarray(0, blocks * N))
+            .xof(N);
+    };
+    return {
+        PRFaddr: (addr) => {
+            if (!skSeed)
+                throw new Error('no sk seed');
+            stats.prf++;
+            const res = h0._cloneInto(h0tmp).update(addr).update(skSeed).xof(N);
+            return res;
+        },
+        PRFmsg: (skPRF, random, msg) => {
+            stats.gen_message_random++;
+            return new HMAC(h1, skPRF).update(random).update(msg).digest().subarray(0, N);
+        },
+        Hmsg: (R, pk, m, outLen) => {
+            stats.hmsg++;
+            return shake256.create({}).update(R.subarray(0, N)).update(pk).update(m).xof(outLen);
+        },
+        thash1: thash.bind(null, 1),
+        thashN: thash,
+        clean: () => {
+            h0.destroy();
+            h0tmp.destroy();
+            //console.log(stats);
+        },
+    };
+};
+const SHAKE_SIMPLE = { getContext: genShake() };
+/** SLH-DSA: 128-bit fast SHAKE version. */
+const slh_dsa_shake_128f = gen(PARAMS['128f'], SHAKE_SIMPLE);
+/** SLH-DSA: 128-bit short SHAKE version. */
+const slh_dsa_shake_128s = gen(PARAMS['128s'], SHAKE_SIMPLE);
+/** SLH-DSA: 192-bit fast SHAKE version. */
+const slh_dsa_shake_192f = gen(PARAMS['192f'], SHAKE_SIMPLE);
+/** SLH-DSA: 192-bit short SHAKE version. */
+const slh_dsa_shake_192s = gen(PARAMS['192s'], SHAKE_SIMPLE);
+/** SLH-DSA: 256-bit fast SHAKE version. */
+const slh_dsa_shake_256f = gen(PARAMS['256f'], SHAKE_SIMPLE);
+/** SLH-DSA: 256-bit short SHAKE version. */
+const slh_dsa_shake_256s = gen(PARAMS['256s'], SHAKE_SIMPLE);
+const genSha = (h0, h1) => (opts) => (pub_seed, sk_seed) => {
+    const { N } = opts;
+    /*
+    Perf debug stats, how much hashes we call?
+    128f_simple: { prf: 8305, thash: 96_922, hmsg: 1, gen_message_random: 1, mgf1: 2 }
+    256s_robust: { prf: 497_686, thash: 2_783_203, hmsg: 1, gen_message_random: 1, mgf1: 2_783_205}
+    256f_simple: { prf: 36_179, thash: 309_693, hmsg: 1, gen_message_random: 1, mgf1: 2 }
+    */
+    const stats = { prf: 0, thash: 0, hmsg: 0, gen_message_random: 0, mgf1: 0 };
+    const counterB = new Uint8Array(4);
+    const counterV = createView(counterB);
+    const h0ps = h0
+        .create()
+        .update(pub_seed)
+        .update(new Uint8Array(h0.blockLen - N));
+    const h1ps = h1
+        .create()
+        .update(pub_seed)
+        .update(new Uint8Array(h1.blockLen - N));
+    const h0tmp = h0ps.clone();
+    const h1tmp = h1ps.clone();
+    function mgf1(seed, length, hash) {
+        stats.mgf1++;
+        const out = new Uint8Array(Math.ceil(length / hash.outputLen) * hash.outputLen);
+        if (length > 2 ** 32)
+            throw new Error('mask too long');
+        for (let counter = 0, o = out; o.length; counter++) {
+            counterV.setUint32(0, counter, false);
+            hash.create().update(seed).update(counterB).digestInto(o);
+            o = o.subarray(hash.outputLen);
+        }
+        out.subarray(length).fill(0);
+        return out.subarray(0, length);
+    }
+    const thash = (_, h, hTmp) => (blocks, input, addr) => {
+        stats.thash++;
+        const d = h
+            ._cloneInto(hTmp)
+            .update(addr)
+            .update(input.subarray(0, blocks * N))
+            .digest();
+        return d.subarray(0, N);
+    };
+    return {
+        PRFaddr: (addr) => {
+            if (!sk_seed)
+                throw new Error('No sk seed');
+            stats.prf++;
+            const res = h0ps
+                ._cloneInto(h0tmp)
+                .update(addr)
+                .update(sk_seed)
+                .digest()
+                .subarray(0, N);
+            return res;
+        },
+        PRFmsg: (skPRF, random, msg) => {
+            stats.gen_message_random++;
+            return new HMAC(h1, skPRF).update(random).update(msg).digest().subarray(0, N);
+        },
+        Hmsg: (R, pk, m, outLen) => {
+            stats.hmsg++;
+            const seed = concatBytes(R.subarray(0, N), pk.subarray(0, N), h1.create().update(R.subarray(0, N)).update(pk).update(m).digest());
+            return mgf1(seed, outLen, h1);
+        },
+        thash1: thash(h0, h0ps, h0tmp).bind(null, 1),
+        thashN: thash(h1, h1ps, h1tmp),
+        clean: () => {
+            h0ps.destroy();
+            h1ps.destroy();
+            h0tmp.destroy();
+            h1tmp.destroy();
+            //console.log(stats);
+        },
+    };
+};
+const SHA256_SIMPLE = {
+    isCompressed: true,
+    getContext: genSha(sha256, sha256),
+};
+const SHA512_SIMPLE = {
+    isCompressed: true,
+    getContext: genSha(sha256, sha512),
+};
+/** SLH-DSA: 128-bit fast SHA2 version. */
+const slh_dsa_sha2_128f = gen(PARAMS['128f'], SHA256_SIMPLE);
+/** SLH-DSA: 128-bit small SHA2 version. */
+const slh_dsa_sha2_128s = gen(PARAMS['128s'], SHA256_SIMPLE);
+/** SLH-DSA: 192-bit fast SHA2 version. */
+const slh_dsa_sha2_192f = gen(PARAMS['192f'], SHA512_SIMPLE);
+/** SLH-DSA: 192-bit small SHA2 version. */
+const slh_dsa_sha2_192s = gen(PARAMS['192s'], SHA512_SIMPLE);
+/** SLH-DSA: 256-bit fast SHA2 version. */
+const slh_dsa_sha2_256f = gen(PARAMS['256f'], SHA512_SIMPLE);
+/** SLH-DSA: 256-bit small SHA2 version. */
+const slh_dsa_sha2_256s = gen(PARAMS['256s'], SHA512_SIMPLE);
+
+export default {
+    slh_dsa_sha2_128f,
+    slh_dsa_sha2_128s,
+    slh_dsa_sha2_192f,
+    slh_dsa_sha2_192s,
+    slh_dsa_sha2_256f,
+    slh_dsa_sha2_256s,
+    slh_dsa_shake_128f,
+    slh_dsa_shake_128s,
+    slh_dsa_shake_192f,
+    slh_dsa_shake_192s,
+    slh_dsa_shake_256f,
+    slh_dsa_shake_256s,
+    PARAMS
+};
+
+
+utils:
+import { abytes } from "@noble/hashes/_assert";
+import { sha256, sha224, sha384, sha512, sha512_224, sha512_256 } from "@noble/hashes/sha2";
+import { sha3_224, sha3_256, sha3_384, sha3_512, shake128, shake256 } from "@noble/hashes/sha3";
+import { concatBytes, utf8ToBytes, randomBytes as nodeRandomBytes, hexToBytes } from "@noble/hashes/utils";
+
+export { concatBytes, utf8ToBytes };
+export const ensureBytes = abytes;
+export const randomBytes = nodeRandomBytes;
+
+// Compares 2 u8a-s in kinda constant time
+export function equalBytes(a, b) {
+    if (a.length !== b.length)
+        return false;
+    let diff = 0;
+    for (let i = 0; i < a.length; i++)
+        diff |= a[i] ^ b[i];
+    return diff === 0;
+}
+
+export function splitCoder(...lengths) {
+    const getLength = (c) => (typeof c === 'number' ? c : c.bytesLen);
+    const bytesLen = lengths.reduce((sum, a) => sum + getLength(a), 0);
+    return {
+        bytesLen,
+        encode: (bufs) => {
+            const res = new Uint8Array(bytesLen);
+            for (let i = 0, pos = 0; i < lengths.length; i++) {
+                const c = lengths[i];
+                const l = getLength(c);
+                const b = typeof c === 'number' ? bufs[i] : c.encode(bufs[i]);
+                ensureBytes(b, l);
+                res.set(b, pos);
+                if (typeof c !== 'number')
+                    b.fill(0); // clean
+                pos += l;
+            }
+            return res;
+        },
+        decode: (buf) => {
+            ensureBytes(buf, bytesLen);
+            const res = [];
+            for (const c of lengths) {
+                const l = getLength(c);
+                const b = buf.subarray(0, l);
+                res.push(typeof c === 'number' ? b : c.decode(b));
+                buf = buf.subarray(l);
+            }
+            return res;
+        },
+    };
+}
+
+// nano-packed.array (fixed size)
+export function vecCoder(c, vecLen) {
+    const bytesLen = vecLen * c.bytesLen;
+    return {
+        bytesLen,
+        encode: (u) => {
+            if (u.length !== vecLen)
+                throw new Error(`vecCoder.encode: wrong length=${u.length}. Expected: ${vecLen}`);
+            const res = new Uint8Array(bytesLen);
+            for (let i = 0, pos = 0; i < u.length; i++) {
+                const b = c.encode(u[i]);
+                res.set(b, pos);
+                b.fill(0); // clean
+                pos += b.length;
+            }
+            return res;
+        },
+        decode: (a) => {
+            ensureBytes(a, bytesLen);
+            const r = [];
+            for (let i = 0; i < a.length; i += c.bytesLen)
+                r.push(c.decode(a.subarray(i, i + c.bytesLen)));
+            return r;
+        },
+    };
+}
+
+// cleanBytes(new Uint8Array(), [new Uint16Array(), new Uint32Array()])
+export function cleanBytes(...list) {
+    for (const t of list) {
+        if (Array.isArray(t))
+            for (const b of t)
+                b.fill(0);
+        else
+            t.fill(0);
+    }
+}
+
+export function getMask(bits) {
+    return (1 << bits) - 1; // 4 -> 0b1111
+}
+
+export const EMPTY = new Uint8Array(0);
+
+export function getMessage(msg, ctx = EMPTY) {
+    ensureBytes(msg);
+    ensureBytes(ctx);
+    if (ctx.length > 255)
+        throw new Error('context should be less than 255 bytes');
+    return concatBytes(new Uint8Array([0, ctx.length]), ctx, msg);
+}
+
+// OIDS from https://csrc.nist.gov/projects/computer-security-objects-register/algorithm-registration
+// TODO: maybe add 'OID' property to hashes themselves to improve tree-shaking?
+const HASHES = {
+    'SHA2-256': { oid: hexToBytes('0609608648016503040201'), hash: sha256 },
+    'SHA2-384': { oid: hexToBytes('0609608648016503040202'), hash: sha384 },
+    'SHA2-512': { oid: hexToBytes('0609608648016503040203'), hash: sha512 },
+    'SHA2-224': { oid: hexToBytes('0609608648016503040204'), hash: sha224 },
+    'SHA2-512/224': { oid: hexToBytes('0609608648016503040205'), hash: sha512_224 },
+    'SHA2-512/256': { oid: hexToBytes('0609608648016503040206'), hash: sha512_256 },
+    'SHA3-224': { oid: hexToBytes('0609608648016503040207'), hash: sha3_224 },
+    'SHA3-256': { oid: hexToBytes('0609608648016503040208'), hash: sha3_256 },
+    'SHA3-384': { oid: hexToBytes('0609608648016503040209'), hash: sha3_384 },
+    'SHA3-512': { oid: hexToBytes('060960864801650304020A'), hash: sha3_512 },
+    'SHAKE-128': {
+        oid: hexToBytes('060960864801650304020B'),
+        hash: (msg) => shake128(msg, { dkLen: 32 }),
+    },
+    'SHAKE-256': {
+        oid: hexToBytes('060960864801650304020C'),
+        hash: (msg) => shake256(msg, { dkLen: 64 }),
+    },
+};
+
+export function getMessagePrehash(hashName, msg, ctx = EMPTY) {
+    ensureBytes(msg);
+    ensureBytes(ctx);
+    if (ctx.length > 255)
+        throw new Error('context should be less than 255 bytes');
+    if (!HASHES[hashName])
+        throw new Error('unknown hash: ' + hashName);
+    const { oid, hash } = HASHES[hashName];
+    const hashed = hash(msg);
+    return concatBytes(new Uint8Array([1, ctx.length]), ctx, oid, hashed);
+}
+
+
+_crystals:
+import { shake128, shake256 } from "@noble/hashes/sha3";
+import { getMask } from "./utils.js";
+// TODO: benchmark
+function bitReversal(n, bits = 8) {
+    const padded = n.toString(2).padStart(8, '0');
+    const sliced = padded.slice(-bits).padStart(7, '0');
+    const revrsd = sliced.split('').reverse().join('');
+    return Number.parseInt(revrsd, 2);
+}
+export const genCrystals = (opts) => {
+    // isKyber: true means Kyber, false means Dilithium
+    const { newPoly, N, Q, F, ROOT_OF_UNITY, brvBits, isKyber } = opts;
+    const mod = (a, modulo = Q) => {
+        const result = a % modulo | 0;
+        return (result >= 0 ? result | 0 : (modulo + result) | 0) | 0;
+    };
+    // -(Q-1)/2 < a <= (Q-1)/2
+    const smod = (a, modulo = Q) => {
+        const r = mod(a, modulo) | 0;
+        return (r > modulo >> 1 ? (r - modulo) | 0 : r) | 0;
+    };
+    // Generate zettas
+    function getZettas() {
+        const out = newPoly(N);
+        for (let i = 0; i < N; i++) {
+            const b = bitReversal(i, brvBits);
+            const p = BigInt(ROOT_OF_UNITY) ** BigInt(b) % BigInt(Q);
+            out[i] = Number(p) | 0;
+        }
+        return out;
+    }
+    const nttZetas = getZettas();
+    // Number-Theoretic Transform
+    // Explained: https://electricdusk.com/ntt.html
+    // Kyber has slightly different params, since there is no 512th primitive root of unity mod q,
+    // only 256th primitive root of unity mod. Which also complicates MultiplyNTT.
+    // TODO: there should be less ugly way to define this.
+    const LEN1 = isKyber ? 128 : N;
+    const LEN2 = isKyber ? 1 : 0;
+    const NTT = {
+        encode: (r) => {
+            for (let k = 1, len = 128; len > LEN2; len >>= 1) {
+                for (let start = 0; start < N; start += 2 * len) {
+                    const zeta = nttZetas[k++];
+                    for (let j = start; j < start + len; j++) {
+                        const t = mod(zeta * r[j + len]);
+                        r[j + len] = mod(r[j] - t) | 0;
+                        r[j] = mod(r[j] + t) | 0;
+                    }
+                }
+            }
+            return r;
+        },
+        decode: (r) => {
+            for (let k = LEN1 - 1, len = 1 + LEN2; len < LEN1 + LEN2; len <<= 1) {
+                for (let start = 0; start < N; start += 2 * len) {
+                    const zeta = nttZetas[k--];
+                    for (let j = start; j < start + len; j++) {
+                        const t = r[j];
+                        r[j] = mod(t + r[j + len]);
+                        r[j + len] = mod(zeta * (r[j + len] - t));
+                    }
+                }
+            }
+            for (let i = 0; i < r.length; i++)
+                r[i] = mod(F * r[i]);
+            return r;
+        },
+    };
+    // Encode polynominal as bits
+    const bitsCoder = (d, c) => {
+        const mask = getMask(d);
+        const bytesLen = d * (N / 8);
+        return {
+            bytesLen,
+            encode: (poly) => {
+                const r = new Uint8Array(bytesLen);
+                for (let i = 0, buf = 0, bufLen = 0, pos = 0; i < poly.length; i++) {
+                    buf |= (c.encode(poly[i]) & mask) << bufLen;
+                    bufLen += d;
+                    for (; bufLen >= 8; bufLen -= 8, buf >>= 8)
+                        r[pos++] = buf & getMask(bufLen);
+                }
+                return r;
+            },
+            decode: (bytes) => {
+                const r = newPoly(N);
+                for (let i = 0, buf = 0, bufLen = 0, pos = 0; i < bytes.length; i++) {
+                    buf |= bytes[i] << bufLen;
+                    bufLen += 8;
+                    for (; bufLen >= d; bufLen -= d, buf >>= d)
+                        r[pos++] = c.decode(buf & mask);
+                }
+                return r;
+            },
+        };
+    };
+    return { mod, smod, nttZetas, NTT, bitsCoder };
+};
+const createXofShake = (shake) => (seed, blockLen) => {
+    if (!blockLen)
+        blockLen = shake.blockLen;
+    // Optimizations that won't mater:
+    // - cached seed update (two .update(), on start and on the end)
+    // - another cache which cloned into working copy
+    // Faster than multiple updates, since seed less than blockLen
+    const _seed = new Uint8Array(seed.length + 2);
+    _seed.set(seed);
+    const seedLen = seed.length;
+    const buf = new Uint8Array(blockLen); // == shake128.blockLen
+    let h = shake.create({});
+    let calls = 0;
+    let xofs = 0;
+    return {
+        stats: () => ({ calls, xofs }),
+        get: (x, y) => {
+            _seed[seedLen + 0] = x;
+            _seed[seedLen + 1] = y;
+            h.destroy();
+            h = shake.create({}).update(_seed);
+            calls++;
+            return () => {
+                xofs++;
+                return h.xofInto(buf);
+            };
+        },
+        clean: () => {
+            h.destroy();
+            buf.fill(0);
+            _seed.fill(0);
+        },
+    };
+};
+export const XOF128 = createXofShake(shake128);
+export const XOF256 = createXofShake(shake256);
