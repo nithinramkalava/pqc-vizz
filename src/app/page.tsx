@@ -23,6 +23,12 @@ export default function Home() {
                 >
                   Explore Algorithms
                 </Link>
+                <Link 
+                  href="/about" 
+                  className="bg-transparent border border-white text-white hover:bg-white/10 font-medium px-5 py-2.5 rounded-lg transition-colors"
+                >
+                  About Project
+                </Link>
                 <a 
                   href="https://csrc.nist.gov/Projects/post-quantum-cryptography" 
                   target="_blank" 
@@ -40,6 +46,14 @@ export default function Home() {
         <section className="py-16 bg-secondary-50">
           <div className="container mx-auto px-4 md:px-8">
             <h2 className="text-3xl font-bold mb-8 text-center text-secondary-900">Quantum-Resistant Algorithms</h2>
+            
+            <div className="text-center mb-8">
+              <p className="text-secondary-800">
+                All algorithms are implemented in the <a href="https://www.npmjs.com/package/pqc" target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline font-medium">pqc</a> JavaScript library, 
+                making them accessible for web applications.
+              </p>
+            </div>
+            
             <div className="grid md:grid-cols-3 gap-8">
               {/* ML-KEM Card */}
               <div className="card hover:translate-y-[-4px] transition-all duration-300 flex flex-col">

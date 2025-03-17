@@ -53,6 +53,9 @@ export default function Header({ colorScheme = 'primary' }: HeaderProps) {
             <Link href="/slh-dsa" className={getNavLinkClass('/slh-dsa')}>
               SLH-DSA
             </Link>
+            <Link href="/about" className={getNavLinkClass('/about')}>
+              About
+            </Link>
           </nav>
         </div>
       </div>
