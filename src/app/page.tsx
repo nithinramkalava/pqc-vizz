@@ -4,13 +4,14 @@ import Header from './components/Header';
 export default function Home() {
   return (
     <div className="flex flex-col min-h-screen">
+      <div className="absolute top-0 left-0 w-full h-96 bg-gradient-to-br from-primary-700 to-primary-900 z-0"></div>
       <Header />
-      <main className="flex-grow">
+      <main className="flex-grow relative z-1">
         {/* Hero section */}
-        <section className="bg-gradient-to-br from-primary-700 to-primary-900 text-white py-16">
+        <section className="bg-gradient-to-br from-primary-700 to-primary-900 text-white py-16 pt-28">
           <div className="container mx-auto px-4 md:px-8">
             <div className="max-w-3xl">
-              <h1 className="text-4xl md:text-5xl font-bold mb-4">Post-Quantum Cryptography Visualization</h1>
+              <h1 className="text-4xl md:text-5xl font-bold mb-4 drop-shadow-md">Post-Quantum Cryptography Visualization</h1>
               <p className="text-lg md:text-xl opacity-90 mb-8">
                 Explore NIST&apos;s standardized post-quantum cryptographic algorithms designed to resist
                 attacks from both classical and quantum computers.

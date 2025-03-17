@@ -83,6 +83,7 @@ export default function MLKEMPage() {
         const secretsMatch = Buffer.compare(aliceSharedSecret, bobSharedSecret) === 0;
         
         return {
+          secretKey: Array.from(aliceKeys.secretKey),
           cipherText: Array.from(cipherText),
           sharedSecret: Array.from(bobSharedSecret),
           aliceSharedSecret: Array.from(aliceSharedSecret),
@@ -123,17 +124,31 @@ export default function MLKEMPage() {
         });
         
         return {
+          publicKey: Array.from(aliceKeys.publicKey),
+          secretKey: Array.from(aliceKeys.secretKey),
+          cipherText: Array.from(cipherText),
+          sharedSecret: Array.from(bobSharedSecret),
+          aliceSharedSecret: Array.from(aliceSharedSecret),
+          secretsMatch: secretsMatch,
           keyGeneration: {
+            publicKey: Array.from(aliceKeys.publicKey),
+            secretKey: Array.from(aliceKeys.secretKey),
             publicKeySize: aliceKeys.publicKey.length,
             secretKeySize: aliceKeys.secretKey.length,
             executionTime: `${(endKeyGen - startKeyGen).toFixed(2)}ms`
           },
           encapsulation: {
+            publicKey: Array.from(aliceKeys.publicKey),
+            cipherText: Array.from(cipherText),
+            sharedSecret: Array.from(bobSharedSecret),
             cipherTextSize: cipherText.length,
             sharedSecretSize: bobSharedSecret.length,
             executionTime: `${(endEncaps - startEncaps).toFixed(2)}ms`
           },
           decapsulation: {
+            secretKey: Array.from(aliceKeys.secretKey),
+            cipherText: Array.from(cipherText),
+            sharedSecret: Array.from(aliceSharedSecret),
             secretsMatch: secretsMatch,
             executionTime: `${(endDecaps - startDecaps).toFixed(2)}ms`
           },
@@ -189,10 +204,11 @@ export default function MLKEMPage() {
 
   return (
     <div className="flex flex-col min-h-screen">
+      <div className="absolute top-0 left-0 w-full h-64 bg-gradient-to-r from-primary-700 to-primary-900 z-0"></div>
       <Header colorScheme="primary" />
       
       {/* Hero Section */}
-      <div className="bg-gradient-to-r from-primary-700 to-primary-900 text-white py-12">
+      <div className="bg-gradient-to-r from-primary-700 to-primary-900 text-white py-12 pt-28 relative z-1">
         <div className="container mx-auto px-4">
           <div className="max-w-4xl mx-auto">
             <div className="flex items-center mb-6">
@@ -299,7 +315,7 @@ export default function MLKEMPage() {
                   <div className="h-full flex flex-col bg-primary-50 rounded-xl p-6">
                     <div className="text-center mb-4">
                       <div className="inline-flex items-center justify-center h-16 w-16 rounded-full bg-primary-100 text-primary-700 mb-2">
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg className="h-8 w-8" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
                         </svg>
                       </div>
@@ -321,7 +337,7 @@ export default function MLKEMPage() {
                   <div className="h-full flex flex-col bg-accent-50 rounded-xl p-6">
                     <div className="text-center mb-4">
                       <div className="inline-flex items-center justify-center h-16 w-16 rounded-full bg-accent-100 text-accent-700 mb-2">
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg className="h-8 w-8" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
                         </svg>
                       </div>
@@ -344,7 +360,7 @@ export default function MLKEMPage() {
                   <div className="h-full flex flex-col bg-secondary-50 rounded-xl p-6">
                     <div className="text-center mb-4">
                       <div className="inline-flex items-center justify-center h-16 w-16 rounded-full bg-secondary-100 text-secondary-700 mb-2">
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg className="h-8 w-8" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
                         </svg>
                       </div>
@@ -420,8 +436,12 @@ export default function MLKEMPage() {
                             ${animationStep >= 1 ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}>
                             <p className="text-sm font-medium text-blue-800 mb-2">1. Generates Key Pair</p>
                             <div className="text-xs space-y-1 text-secondary-800">
-                              <p><strong>Public Key:</strong> {flow.alicePublicKey as React.ReactNode}</p>
-                              <p><strong>Private Key:</strong> {flow.alicePrivateKey as React.ReactNode}</p>
+                              <p><strong>Public Key:</strong> {Array.isArray(flow.alicePublicKey) ? 
+                                `[${flow.alicePublicKey.join(', ')}${flow.alicePublicKey.length < 10 ? '' : '...'}]` : 
+                                flow.alicePublicKey as React.ReactNode}</p>
+                              <p><strong>Private Key:</strong> {Array.isArray(flow.alicePrivateKey) ? 
+                                `[${flow.alicePrivateKey.join(', ')}${flow.alicePrivateKey.length < 10 ? '' : '...'}]` :  
+                                flow.alicePrivateKey as React.ReactNode}</p>
                             </div>
                           </div>
                           
@@ -429,7 +449,9 @@ export default function MLKEMPage() {
                             ${animationStep >= 4 ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}>
                             <p className="text-sm font-medium text-blue-800 mb-2">4. Decapsulates Shared Secret</p>
                             <div className="text-xs space-y-1 text-secondary-800">
-                              <p><strong>Shared Secret:</strong> {JSON.stringify(flow.aliceSharedSecret) as React.ReactNode}</p>
+                              <p><strong>Shared Secret:</strong> {Array.isArray(flow.aliceSharedSecret) ? 
+                                `[${flow.aliceSharedSecret.join(', ')}${flow.aliceSharedSecret.length < 10 ? '' : '...'}]` : 
+                                flow.aliceSharedSecret as React.ReactNode}</p>
                               {animationComplete && (flow.secretsMatch as boolean) && (
                                 <p className="mt-2 text-green-600 font-semibold">✓ Matches Bob&apos;s secret</p>
                               )}
@@ -480,8 +502,12 @@ export default function MLKEMPage() {
                             ${animationStep >= 3 ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}>
                             <p className="text-sm font-medium text-green-800 mb-2">3. Encapsulates Shared Secret</p>
                             <div className="text-xs space-y-1 text-secondary-800">
-                              <p><strong>Ciphertext:</strong> {flow.cipherText as React.ReactNode}</p>
-                              <p><strong>Shared Secret:</strong> {JSON.stringify(flow.bobSharedSecret) as React.ReactNode}</p>
+                              <p><strong>Ciphertext:</strong> {Array.isArray(flow.cipherText) ? 
+                                `[${flow.cipherText.join(', ')}${flow.cipherText.length < 10 ? '' : '...'}]` : 
+                                flow.cipherText as React.ReactNode}</p>
+                              <p><strong>Shared Secret:</strong> {Array.isArray(flow.bobSharedSecret) ? 
+                                `[${flow.bobSharedSecret.join(', ')}${flow.bobSharedSecret.length < 10 ? '' : '...'}]` : 
+                                flow.bobSharedSecret as React.ReactNode}</p>
                             </div>
                           </div>
                         </div>

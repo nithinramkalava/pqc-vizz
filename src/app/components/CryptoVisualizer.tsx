@@ -518,7 +518,7 @@ export default function CryptoVisualizer({
       );
     }
     
-    // For any other operations that don't match the above specific handlers
+    // For any other operations including Complete KEM/DSA flows
     return (
       <div>
         {/* Show basic info for non-expanded view */}
@@ -530,107 +530,245 @@ export default function CryptoVisualizer({
             {renderBasicInfo()}
             
             <div className="mt-6 border-t border-secondary-200 pt-4">
-              <div className="font-medium text-secondary-900 mb-4">Full Details (Debug View):</div>
+              <div className="font-medium text-secondary-900 mb-4">Full Details:</div>
               
               {/* Available keys */}
-              {result.publicKey && (
+              {Boolean(result.publicKey || (result.keyGeneration && typeof result.keyGeneration === 'object' && 'publicKey' in result.keyGeneration)) && (
                 <div className="mt-4">
                   <div className="font-medium text-secondary-900 mb-2">Public Key:</div>
                   <div className="bg-white p-2 rounded overflow-x-auto border border-secondary-200 font-mono text-xs text-secondary-900">
-                    {formatArray(result.publicKey, true)}
+                    {formatArray(
+                      result.publicKey || 
+                      (result.keyGeneration && typeof result.keyGeneration === 'object' && 'publicKey' in result.keyGeneration 
+                        ? result.keyGeneration.publicKey as number[] 
+                        : []), 
+                      true)}
                   </div>
                 </div>
               )}
               
-              {result.secretKey && (
+              {Boolean(result.secretKey || (result.keyGeneration && typeof result.keyGeneration === 'object' && 'secretKey' in result.keyGeneration)) && (
                 <div className="mt-4">
                   <div className="font-medium text-secondary-900 mb-2">Secret Key:</div>
                   <div className="bg-white p-2 rounded overflow-x-auto border border-secondary-200 font-mono text-xs text-secondary-900">
-                    {formatArray(result.secretKey, true)}
+                    {formatArray(
+                      result.secretKey || 
+                      (result.keyGeneration && typeof result.keyGeneration === 'object' && 'secretKey' in result.keyGeneration 
+                        ? result.keyGeneration.secretKey as number[] 
+                        : []), 
+                      true)}
                   </div>
                 </div>
               )}
               
               {/* Signatures, ciphertexts, shared secrets */}
-              {result.signature && (
+              {Boolean(
+                result.signature || 
+                (result.signing && typeof result.signing === 'object' && 'signature' in result.signing) || 
+                (result.verification && typeof result.verification === 'object' && 'signature' in result.verification)
+              ) && (
                 <div className="mt-4">
                   <div className="font-medium text-secondary-900 mb-2">Signature:</div>
                   <div className="bg-white p-2 rounded overflow-x-auto border border-secondary-200 font-mono text-xs text-secondary-900">
-                    {formatArray(result.signature, true)}
+                    {formatArray(
+                      result.signature || 
+                      (result.signing && typeof result.signing === 'object' && 'signature' in result.signing
+                        ? result.signing.signature as number[] 
+                        : (result.verification && typeof result.verification === 'object' && 'signature' in result.verification
+                            ? result.verification.signature as number[] 
+                            : [])), 
+                      true
+                    )}
                   </div>
                 </div>
               )}
               
-              {result.cipherText && (
+              {Boolean(
+                result.cipherText || 
+                (result.encapsulation && typeof result.encapsulation === 'object' && 'cipherText' in result.encapsulation) || 
+                (result.decapsulation && typeof result.decapsulation === 'object' && 'cipherText' in result.decapsulation)
+              ) && (
                 <div className="mt-4">
                   <div className="font-medium text-secondary-900 mb-2">Cipher Text:</div>
                   <div className="bg-white p-2 rounded overflow-x-auto border border-secondary-200 font-mono text-xs text-secondary-900">
-                    {formatArray(result.cipherText, true)}
+                    {formatArray(
+                      result.cipherText || 
+                      (result.encapsulation && typeof result.encapsulation === 'object' && 'cipherText' in result.encapsulation
+                        ? result.encapsulation.cipherText as number[] 
+                        : (result.decapsulation && typeof result.decapsulation === 'object' && 'cipherText' in result.decapsulation
+                            ? result.decapsulation.cipherText as number[] 
+                            : [])), 
+                      true
+                    )}
                   </div>
                 </div>
               )}
               
-              {result.sharedSecret && (
+              {Boolean(
+                result.sharedSecret || 
+                (result.encapsulation && typeof result.encapsulation === 'object' && 'sharedSecret' in result.encapsulation) || 
+                (result.decapsulation && typeof result.decapsulation === 'object' && 'sharedSecret' in result.decapsulation)
+              ) && (
                 <div className="mt-4">
                   <div className="font-medium text-secondary-900 mb-2">Shared Secret:</div>
                   <div className="bg-white p-2 rounded overflow-x-auto border border-secondary-200 font-mono text-xs text-secondary-900">
-                    {formatArray(result.sharedSecret, true)}
+                    {formatArray(
+                      result.sharedSecret || 
+                      (result.encapsulation && typeof result.encapsulation === 'object' && 'sharedSecret' in result.encapsulation
+                        ? result.encapsulation.sharedSecret as number[] 
+                        : (result.decapsulation && typeof result.decapsulation === 'object' && 'sharedSecret' in result.decapsulation
+                            ? result.decapsulation.sharedSecret as number[] 
+                            : [])), 
+                      true
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {Boolean(result.message || (result.signing && typeof result.signing === 'object' && 'message' in result.signing)) && (
+                <div className="mt-4">
+                  <div className="font-medium text-secondary-900 mb-2">Message:</div>
+                  <div className="bg-white p-2 rounded border border-secondary-200 text-secondary-900">
+                    {String(result.message || (result.signing && 'message' in result.signing ? result.signing.message : ''))}
                   </div>
                 </div>
               )}
               
-              {/* Show full nested structure data */}
-              {result.keyGeneration && (
+              {/* Specific nested data for KEM/DSA operations */}
+              {result.keyGeneration && typeof result.keyGeneration === 'object' && (
                 <div className="mt-4">
-                  <div className="font-medium text-secondary-900 mb-2">Key Generation Data:</div>
-                  <pre className="bg-white p-2 rounded overflow-x-auto border border-secondary-200 font-mono text-xs text-secondary-900">
-                    {JSON.stringify(result.keyGeneration, null, 2)}
-                  </pre>
+                  <div className="font-medium text-secondary-900 mb-2">Key Generation Details:</div>
+                  <div className="bg-secondary-50 p-3 rounded-lg border border-secondary-200">
+                    <div className="grid grid-cols-1 gap-2 text-secondary-800">
+                      {(typeof result.keyGeneration.publicKeySize === 'number') && (
+                        <div className="flex justify-between">
+                          <span>Public Key Size:</span>
+                          <span className="font-medium">{result.keyGeneration.publicKeySize} bytes</span>
+                        </div>
+                      )}
+                      {(typeof result.keyGeneration.secretKeySize === 'number') && (
+                        <div className="flex justify-between">
+                          <span>Secret Key Size:</span>
+                          <span className="font-medium">{result.keyGeneration.secretKeySize} bytes</span>
+                        </div>
+                      )}
+                      {(typeof result.keyGeneration.executionTime === 'string') && (
+                        <div className="flex justify-between">
+                          <span>Execution Time:</span>
+                          <span className="font-medium">{result.keyGeneration.executionTime}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
               
-              {result.signing && (
+              {result.encapsulation && typeof result.encapsulation === 'object' && (
                 <div className="mt-4">
-                  <div className="font-medium text-secondary-900 mb-2">Signing Data:</div>
-                  <pre className="bg-white p-2 rounded overflow-x-auto border border-secondary-200 font-mono text-xs text-secondary-900">
-                    {JSON.stringify(result.signing, null, 2)}
-                  </pre>
+                  <div className="font-medium text-secondary-900 mb-2">Encapsulation Details:</div>
+                  <div className="bg-secondary-50 p-3 rounded-lg border border-secondary-200">
+                    <div className="grid grid-cols-1 gap-2 text-secondary-800">
+                      {(typeof result.encapsulation.cipherTextSize === 'number') && (
+                        <div className="flex justify-between">
+                          <span>Cipher Text Size:</span>
+                          <span className="font-medium">{result.encapsulation.cipherTextSize} bytes</span>
+                        </div>
+                      )}
+                      {(typeof result.encapsulation.sharedSecretSize === 'number') && (
+                        <div className="flex justify-between">
+                          <span>Shared Secret Size:</span>
+                          <span className="font-medium">{result.encapsulation.sharedSecretSize} bytes</span>
+                        </div>
+                      )}
+                      {(typeof result.encapsulation.executionTime === 'string') && (
+                        <div className="flex justify-between">
+                          <span>Execution Time:</span>
+                          <span className="font-medium">{result.encapsulation.executionTime}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
               
-              {result.verification && (
+              {result.decapsulation && typeof result.decapsulation === 'object' && (
                 <div className="mt-4">
-                  <div className="font-medium text-secondary-900 mb-2">Verification Data:</div>
-                  <pre className="bg-white p-2 rounded overflow-x-auto border border-secondary-200 font-mono text-xs text-secondary-900">
-                    {JSON.stringify(result.verification, null, 2)}
-                  </pre>
+                  <div className="font-medium text-secondary-900 mb-2">Decapsulation Details:</div>
+                  <div className="bg-secondary-50 p-3 rounded-lg border border-secondary-200">
+                    <div className="grid grid-cols-1 gap-2 text-secondary-800">
+                      {(typeof result.decapsulation.secretsMatch === 'boolean') && (
+                        <div className="flex justify-between">
+                          <span>Secrets Match:</span>
+                          <span className={result.decapsulation.secretsMatch ? "text-green-600 font-semibold" : "text-red-600 font-semibold"}>
+                            {result.decapsulation.secretsMatch ? "Yes ✓" : "No ✗"}
+                          </span>
+                        </div>
+                      )}
+                      {(typeof result.decapsulation.executionTime === 'string') && (
+                        <div className="flex justify-between">
+                          <span>Execution Time:</span>
+                          <span className="font-medium">{result.decapsulation.executionTime}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
               
-              {result.encapsulation && (
+              {result.signing && typeof result.signing === 'object' && (
                 <div className="mt-4">
-                  <div className="font-medium text-secondary-900 mb-2">Encapsulation Data:</div>
-                  <pre className="bg-white p-2 rounded overflow-x-auto border border-secondary-200 font-mono text-xs text-secondary-900">
-                    {JSON.stringify(result.encapsulation, null, 2)}
-                  </pre>
+                  <div className="font-medium text-secondary-900 mb-2">Signing Details:</div>
+                  <div className="bg-secondary-50 p-3 rounded-lg border border-secondary-200">
+                    <div className="grid grid-cols-1 gap-2 text-secondary-800">
+                      {(typeof result.signing.signatureSize === 'number') && (
+                        <div className="flex justify-between">
+                          <span>Signature Size:</span>
+                          <span className="font-medium">{result.signing.signatureSize} bytes</span>
+                        </div>
+                      )}
+                      {(typeof result.signing.executionTime === 'string') && (
+                        <div className="flex justify-between">
+                          <span>Execution Time:</span>
+                          <span className="font-medium">{result.signing.executionTime}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
               
-              {result.decapsulation && (
+              {result.verification && typeof result.verification === 'object' && (
                 <div className="mt-4">
-                  <div className="font-medium text-secondary-900 mb-2">Decapsulation Data:</div>
-                  <pre className="bg-white p-2 rounded overflow-x-auto border border-secondary-200 font-mono text-xs text-secondary-900">
-                    {JSON.stringify(result.decapsulation, null, 2)}
-                  </pre>
+                  <div className="font-medium text-secondary-900 mb-2">Verification Details:</div>
+                  <div className="bg-secondary-50 p-3 rounded-lg border border-secondary-200">
+                    <div className="grid grid-cols-1 gap-2 text-secondary-800">
+                      {(typeof result.verification.isValid === 'boolean') && (
+                        <div className="flex justify-between">
+                          <span>Valid Signature:</span>
+                          <span className={result.verification.isValid ? "text-green-600 font-semibold" : "text-red-600 font-semibold"}>
+                            {result.verification.isValid ? "Yes ✓" : "No ✗"}
+                          </span>
+                        </div>
+                      )}
+                      {(typeof result.verification.executionTime === 'string') && (
+                        <div className="flex justify-between">
+                          <span>Execution Time:</span>
+                          <span className="font-medium">{result.verification.executionTime}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
               
-              {/* Show complete structure in debug mode */}
+              {/* Debug view only when necessary */}
               <div className="mt-6">
-                <div className="font-medium text-secondary-900 mb-2">Complete Data Structure:</div>
-                <pre className="bg-white p-2 rounded overflow-x-auto border border-secondary-200 font-mono text-xs text-secondary-900">
-                  {JSON.stringify(result, null, 2)}
-                </pre>
+                <details className="text-sm text-secondary-600">
+                  <summary className="cursor-pointer hover:text-secondary-800">Show Raw Data Structure</summary>
+                  <pre className="mt-2 bg-white p-2 rounded overflow-x-auto border border-secondary-200 font-mono text-xs text-secondary-900">
+                    {JSON.stringify(result, null, 2)}
+                  </pre>
+                </details>
               </div>
             </div>
           </div>

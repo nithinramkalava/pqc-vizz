@@ -139,6 +139,8 @@ export default function SLHDSAPage() {
           setWarning(null);
           return {
             message: messageStr,
+            publicKey: Array.from(keyPair.publicKey),
+            signature: Array.from(signature),
             isValid: isValid,
             executionTime: `${(endTime - startTime).toFixed(2)}ms`
           };
@@ -172,16 +174,28 @@ export default function SLHDSAPage() {
           
           setWarning(null);
           return {
+            publicKey: Array.from(signerKeys.publicKey),
+            secretKey: Array.from(signerKeys.secretKey),
+            signature: Array.from(signature),
+            message: messageStr,
+            isValid: isValid,
             keyGeneration: {
+              publicKey: Array.from(signerKeys.publicKey),
+              secretKey: Array.from(signerKeys.secretKey),
               publicKeySize: signerKeys.publicKey.length,
               secretKeySize: signerKeys.secretKey.length,
               executionTime: `${(endKeyGen - startKeyGen).toFixed(2)}ms`
             },
             signing: {
+              message: messageStr,
+              signature: Array.from(signature),
               signatureSize: signature.length,
               executionTime: `${(endSign - startSign).toFixed(2)}ms`
             },
             verification: {
+              message: messageStr,
+              publicKey: Array.from(signerKeys.publicKey),
+              signature: Array.from(signature),
               isValid: isValid,
               executionTime: `${(endVerify - startVerify).toFixed(2)}ms`
             },
@@ -200,10 +214,11 @@ export default function SLHDSAPage() {
 
   return (
     <div className="flex flex-col min-h-screen">
+      <div className="absolute top-0 left-0 w-full h-64 bg-gradient-to-r from-secondary-700 to-secondary-900 z-0"></div>
       <Header colorScheme="secondary" />
       
       {/* Hero Section */}
-      <div className="bg-gradient-to-r from-secondary-700 to-secondary-900 text-white py-12">
+      <div className="bg-gradient-to-r from-secondary-700 to-secondary-900 text-white py-12 pt-28 relative z-1">
         <div className="container mx-auto px-4">
           <div className="max-w-4xl mx-auto">
             <div className="flex items-center mb-6">
@@ -478,8 +493,12 @@ export default function SLHDSAPage() {
                             ${animationStep >= 1 ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}>
                             <p className="text-sm font-medium text-gray-800 mb-2">1. Generates Key Pair</p>
                             <div className="text-xs space-y-1 text-secondary-800">
-                              <p><strong>Public Key:</strong> {flow.signerPublicKey as React.ReactNode}</p>
-                              <p><strong>Private Key:</strong> {flow.signerPrivateKey as React.ReactNode}</p>
+                              <p><strong>Public Key:</strong> {Array.isArray(flow.signerPublicKey) ? 
+                                `[${flow.signerPublicKey.join(', ')}${flow.signerPublicKey.length < 10 ? '' : '...'}]` : 
+                                flow.signerPublicKey as React.ReactNode}</p>
+                              <p><strong>Private Key:</strong> {Array.isArray(flow.signerPrivateKey) ? 
+                                `[${flow.signerPrivateKey.join(', ')}${flow.signerPrivateKey.length < 10 ? '' : '...'}]` :  
+                                flow.signerPrivateKey as React.ReactNode}</p>
                             </div>
                           </div>
                           
@@ -488,7 +507,9 @@ export default function SLHDSAPage() {
                             <p className="text-sm font-medium text-gray-800 mb-2">2. Signs Message</p>
                             <div className="text-xs space-y-1 text-secondary-800">
                               <p><strong>Message:</strong> {flow.message as React.ReactNode}</p>
-                              <p><strong>Signature:</strong> {flow.signature as React.ReactNode}</p>
+                              <p><strong>Signature:</strong> {Array.isArray(flow.signature) ? 
+                                `[${flow.signature.join(', ')}${flow.signature.length < 10 ? '' : '...'}]` : 
+                                flow.signature as React.ReactNode}</p>
                             </div>
                           </div>
                         </div>
@@ -532,8 +553,12 @@ export default function SLHDSAPage() {
                             <p className="text-sm font-medium text-gray-800 mb-2">3. Verifies Signature</p>
                             <div className="text-xs space-y-1 text-secondary-800">
                               <p><strong>Message:</strong> {flow.message as React.ReactNode}</p>
-                              <p><strong>Public Key:</strong> {flow.signerPublicKey as React.ReactNode}</p>
-                              <p><strong>Signature:</strong> {flow.signature as React.ReactNode}</p>
+                              <p><strong>Public Key:</strong> {Array.isArray(flow.signerPublicKey) ? 
+                                `[${flow.signerPublicKey.join(', ')}${flow.signerPublicKey.length < 10 ? '' : '...'}]` : 
+                                flow.signerPublicKey as React.ReactNode}</p>
+                              <p><strong>Signature:</strong> {Array.isArray(flow.signature) ? 
+                                `[${flow.signature.join(', ')}${flow.signature.length < 10 ? '' : '...'}]` : 
+                                flow.signature as React.ReactNode}</p>
                               <p><strong>Result:</strong> <span className={flow.isValid ? "text-green-600 font-semibold" : "text-red-600 font-semibold"}>
                                 {flow.isValid ? "Valid ✓" : "Invalid ✗"}
                               </span></p>

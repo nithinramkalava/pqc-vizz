@@ -79,6 +79,8 @@ export default function MLDSAPage() {
         
         return {
           message: messageStr,
+          publicKey: Array.from(keyPair.publicKey),
+          signature: Array.from(signature),
           isValid: isValid,
           executionTime: `${(endTime - startTime).toFixed(2)}ms`
         };
@@ -104,23 +106,56 @@ export default function MLDSAPage() {
         // Save flow for visualization
         setFlow({
           message: messageStr,
-          signerPublicKey: Array.from(signerKeys.publicKey).slice(0, 10),
-          signerPrivateKey: Array.from(signerKeys.secretKey).slice(0, 10),
-          signature: Array.from(signature).slice(0, 10),
-          isValid: isValid
-        });
-        
-        return {
+          publicKey: Array.from(signerKeys.publicKey).slice(0, 10).concat([0]).slice(0, 10),
+          secretKey: Array.from(signerKeys.secretKey).slice(0, 10).concat([0]).slice(0, 10),
+          signature: Array.from(signature).slice(0, 10).concat([0]).slice(0, 10),
+          isValid: isValid,
           keyGeneration: {
+            publicKey: Array.from(signerKeys.publicKey),
+            secretKey: Array.from(signerKeys.secretKey),
             publicKeySize: signerKeys.publicKey.length,
             secretKeySize: signerKeys.secretKey.length,
             executionTime: `${(endKeyGen - startKeyGen).toFixed(2)}ms`
           },
           signing: {
+            message: messageStr,
+            signature: Array.from(signature),
             signatureSize: signature.length,
             executionTime: `${(endSign - startSign).toFixed(2)}ms`
           },
           verification: {
+            message: messageStr,
+            publicKey: Array.from(signerKeys.publicKey),
+            signature: Array.from(signature),
+            isValid: isValid,
+            executionTime: `${(endVerify - startVerify).toFixed(2)}ms`
+          },
+          totalExecutionTime: `${(endVerify - startKeyGen).toFixed(2)}ms`
+        });
+        
+        return {
+          publicKey: Array.from(signerKeys.publicKey),
+          secretKey: Array.from(signerKeys.secretKey),
+          signature: Array.from(signature),
+          message: messageStr,
+          isValid: isValid,
+          keyGeneration: {
+            publicKey: Array.from(signerKeys.publicKey),
+            secretKey: Array.from(signerKeys.secretKey),
+            publicKeySize: signerKeys.publicKey.length,
+            secretKeySize: signerKeys.secretKey.length,
+            executionTime: `${(endKeyGen - startKeyGen).toFixed(2)}ms`
+          },
+          signing: {
+            message: messageStr,
+            signature: Array.from(signature),
+            signatureSize: signature.length,
+            executionTime: `${(endSign - startSign).toFixed(2)}ms`
+          },
+          verification: {
+            message: messageStr,
+            publicKey: Array.from(signerKeys.publicKey),
+            signature: Array.from(signature),
             isValid: isValid,
             executionTime: `${(endVerify - startVerify).toFixed(2)}ms`
           },
@@ -176,10 +211,11 @@ export default function MLDSAPage() {
 
   return (
     <div className="flex flex-col min-h-screen">
+      <div className="absolute top-0 left-0 w-full h-64 bg-gradient-to-r from-accent-700 to-accent-900 z-0"></div>
       <Header colorScheme="accent" />
       
       {/* Hero Section */}
-      <div className="bg-gradient-to-r from-accent-700 to-accent-900 text-white py-12">
+      <div className="bg-gradient-to-r from-accent-700 to-accent-900 text-white py-12 pt-28 relative z-1">
         <div className="container mx-auto px-4">
           <div className="max-w-4xl mx-auto">
             <div className="flex items-center mb-6">
@@ -411,8 +447,12 @@ export default function MLDSAPage() {
                             ${animationStep >= 1 ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}>
                             <p className="text-sm font-medium text-purple-800 mb-2">1. Generates Key Pair</p>
                             <div className="text-xs space-y-1 text-secondary-800">
-                              <p><strong>Public Key:</strong> {flow.signerPublicKey as React.ReactNode}</p>
-                              <p><strong>Private Key:</strong> {flow.signerPrivateKey as React.ReactNode}</p>
+                              <p><strong>Public Key:</strong> {Array.isArray(flow.publicKey) ? 
+                                `[${flow.publicKey.join(', ')}${flow.publicKey.length < 10 ? '' : '...'}]` : 
+                                flow.publicKey as React.ReactNode}</p>
+                              <p><strong>Private Key:</strong> {Array.isArray(flow.secretKey) ? 
+                                `[${flow.secretKey.join(', ')}${flow.secretKey.length < 10 ? '' : '...'}]` :  
+                                flow.secretKey as React.ReactNode}</p>
                             </div>
                           </div>
                           
@@ -421,7 +461,9 @@ export default function MLDSAPage() {
                             <p className="text-sm font-medium text-purple-800 mb-2">2. Signs Message</p>
                             <div className="text-xs space-y-1 text-secondary-800">
                               <p><strong>Message:</strong> {flow.message as React.ReactNode}</p>
-                              <p><strong>Signature:</strong> {flow.signature as React.ReactNode}</p>
+                              <p><strong>Signature:</strong> {Array.isArray(flow.signature) ? 
+                                `[${flow.signature.join(', ')}${flow.signature.length < 10 ? '' : '...'}]` : 
+                                flow.signature as React.ReactNode}</p>
                             </div>
                           </div>
                         </div>
@@ -464,8 +506,12 @@ export default function MLDSAPage() {
                             <p className="text-sm font-medium text-orange-800 mb-2">3. Verifies Signature</p>
                             <div className="text-xs space-y-1 text-secondary-800">
                               <p><strong>Message:</strong> {flow.message as React.ReactNode}</p>
-                              <p><strong>Public Key:</strong> {flow.signerPublicKey as React.ReactNode}</p>
-                              <p><strong>Signature:</strong> {flow.signature as React.ReactNode}</p>
+                              <p><strong>Public Key:</strong> {Array.isArray(flow.publicKey) ? 
+                                `[${flow.publicKey.join(', ')}${flow.publicKey.length < 10 ? '' : '...'}]` : 
+                                flow.publicKey as React.ReactNode}</p>
+                              <p><strong>Signature:</strong> {Array.isArray(flow.signature) ? 
+                                `[${flow.signature.join(', ')}${flow.signature.length < 10 ? '' : '...'}]` : 
+                                flow.signature as React.ReactNode}</p>
                               <p><strong>Result:</strong> <span className={flow.isValid ? "text-green-600 font-semibold" : "text-red-600 font-semibold"}>
                                 {flow.isValid ? "Valid ✓" : "Invalid ✗"}
                               </span></p>
