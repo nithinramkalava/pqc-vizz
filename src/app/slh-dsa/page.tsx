@@ -456,7 +456,7 @@ export default function SLHDSAPage() {
             </div>
           </section>
           
-          {/* Interactive Operations */}
+          {/* Try SLH-DSA Operations */}
           <section className="mb-12">
             <h2 className="text-2xl font-bold mb-6 text-secondary-900">Try SLH-DSA Operations</h2>
             <CryptoVisualizer
@@ -659,6 +659,31 @@ export default function SLHDSAPage() {
                     </div>
                   </div>
                 </div>
+              </div>
+            </div>
+          </section>
+          
+          {/* Interactive Operations */}
+          <section className="mb-12">
+            <h2 className="text-2xl font-bold mb-6 text-secondary-900">Interactive SLH-DSA Demo</h2>
+            <div className="bg-white rounded-xl shadow-md overflow-hidden p-8">
+              <div className="text-center">
+                <div className="inline-flex items-center justify-center h-20 w-20 rounded-full bg-secondary-100 text-secondary-700 mb-4">
+                  <svg className="h-10 w-10" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                  </svg>
+                </div>
+                <h3 className="text-xl font-bold text-secondary-900 mb-2">Try SLH-DSA Signing & Verification</h3>
+                <p className="text-secondary-700 max-w-2xl mx-auto mb-6">
+                  Experience the full SLH-DSA workflow with our interactive implementation. Generate keys, sign data, and verify signatures with various security levels and algorithm variants.
+                </p>
+                <Link href="/slh-dsa/try-slhdsa" className="inline-flex items-center justify-center px-6 py-3 bg-secondary-600 hover:bg-secondary-700 text-white font-medium rounded-lg transition-colors">
+                  <svg className="mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Interactive SLH-DSA Demo
+                </Link>
               </div>
             </div>
           </section>

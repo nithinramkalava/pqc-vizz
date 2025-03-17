@@ -398,9 +398,9 @@ export default function MLKEMPage() {
             </div>
           </section>
           
-          {/* Interactive Operations */}
+          {/* ML-KEM Operations */}
           <section className="mb-12">
-            <h2 className="text-2xl font-bold mb-6 text-secondary-900">Try ML-KEM Operations</h2>
+            <h2 className="text-2xl font-bold mb-6 text-secondary-900">ML-KEM Operations</h2>
             <CryptoVisualizer
               title="ML-KEM Operations"
               description="Explore ML-KEM's key generation, encapsulation, and decapsulation operations at different security levels."
@@ -534,6 +534,31 @@ export default function MLKEMPage() {
               </div>
             </section>
           )}
+          
+          {/* Interactive Operations */}
+          <section className="mb-12">
+            <h2 className="text-2xl font-bold mb-6 text-secondary-900">Interactive ML-KEM Demo</h2>
+            <div className="bg-white rounded-xl shadow-md overflow-hidden p-8">
+              <div className="text-center">
+                <div className="inline-flex items-center justify-center h-20 w-20 rounded-full bg-primary-100 text-primary-700 mb-4">
+                  <svg className="h-10 w-10" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  </svg>
+                </div>
+                <h3 className="text-xl font-bold text-secondary-900 mb-2">Try ML-KEM Key Exchange with AES</h3>
+                <p className="text-secondary-700 max-w-2xl mx-auto mb-6">
+                  Experience the full ML-KEM workflow with our interactive implementation. Generate keys, encapsulate and decapsulate shared secrets, then use the resulting key for AES encryption and decryption.
+                </p>
+                <Link href="/ml-kem/try-mlkem" className="inline-flex items-center justify-center px-6 py-3 bg-primary-600 hover:bg-primary-700 text-white font-medium rounded-lg transition-colors">
+                  <svg className="mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Interactive ML-KEM Demo
+                </Link>
+              </div>
+            </div>
+          </section>
           
           {/* Applications */}
           <section>
