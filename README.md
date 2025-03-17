@@ -1,6 +1,49 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# PQC Visualization
 
-## Getting Started
+A comprehensive visualization and exploration tool for NIST's post-quantum cryptographic standards. This project provides interactive demonstrations and educational resources for understanding quantum-resistant cryptographic algorithms.
+
+## 🔗 Live Demo
+
+**Website:** [https://pqc-vizz.vercel.app/](https://pqc-vizz.vercel.app/)
+
+## 📖 About
+
+This application was developed as a major project for a BTech Computer Science degree at Vasireddy Venkatadri Institute of Technology, India. It aims to help developers understand and visualize post-quantum cryptographic algorithms to prepare for the quantum computing era.
+
+### Features
+
+- Interactive visualizations of all three NIST standardized post-quantum algorithms
+- Performance benchmarks and comparison
+- Educational content explaining algorithm functionality
+- Code examples and implementation details
+
+## 📦 NPM Package
+
+The core cryptographic implementations are available as an NPM package:
+
+- **Package:** [pqc](https://www.npmjs.com/package/pqc)
+- **Implementation:** Pure JavaScript with no native dependencies
+- **Algorithms:** ML-KEM, ML-DSA, and SLH-DSA
+
+### Performance
+
+| Algorithm | Operation | Performance |
+|-----------|-----------|-------------|
+| ML-KEM-768 | Key Generation | 2,305 op/s |
+| ML-DSA65 | Sign | 120 op/s |
+| SLH-DSA-SHA2-128f | Sign | 90ms |
+
+## 🧪 Research Paper
+
+This project is accompanied by a research paper titled "Post-Quantum Security for Web Applications" that details the implementation approach and performance benchmarks.
+
+## 💻 Technologies
+
+- **Frontend:** Next.js, React, TailwindCSS
+- **Cryptography:** JavaScript implementation of NIST FIPS 203, 204, and 205
+- **Deployment:** Vercel
+
+## 🚀 Getting Started
 
 First, run the development server:
 
@@ -10,27 +53,17 @@ npm run dev
 yarn dev
 # or
 pnpm dev
-# or
-bun dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 📝 Author
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+**Nithin Ram Kalava**  
+Email: nithinramkalava@gmail.com
 
-## Learn More
+## 📚 References
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- [NIST FIPS 203](https://doi.org/10.6028/NIST.FIPS.203) - Module-Lattice-Based Key-Encapsulation Mechanism Standard
+- [NIST FIPS 204](https://doi.org/10.6028/NIST.FIPS.204) - Module-Lattice-Based Digital Signature Standard
+- [NIST FIPS 205](https://doi.org/10.6028/NIST.FIPS.205) - Stateless Hash-Based Digital Signature Standard

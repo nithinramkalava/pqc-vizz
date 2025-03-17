@@ -697,7 +697,7 @@ export default function TryMLKEMPage() {
                           Copy
                         </button>
                       </div>
-                      <div className="bg-secondary-50 p-3 rounded-lg">
+                      <div className="bg-white p-3 rounded-lg border border-secondary-300 text-secondary-900 font-medium">
                         {decryptedText}
                       </div>
                     </div>
