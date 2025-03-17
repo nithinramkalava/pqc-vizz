@@ -15,10 +15,6 @@ export default function Header({ colorScheme = 'primary' }: HeaderProps) {
     return pathname === path;
   };
   
-  // Get color classes based on the color scheme - setting it to transparent
-  const getNavbarBgClass = () => {
-    return 'bg-transparent';
-  };
   
   const getNavLinkClass = (path: string) => {
     const baseClass = "py-2 px-3 rounded-md transition-colors drop-shadow-md";
