@@ -139,6 +139,96 @@ export default function Home() {
           </div>
         </section>
 
+        {/* Interactive Tools Section */}
+        <section className="py-16 bg-gradient-to-br from-secondary-100 to-secondary-200">
+          <div className="container mx-auto px-4 md:px-8">
+            <h2 className="text-3xl font-bold mb-3 text-center text-secondary-900">Try Interactive Demos</h2>
+            <p className="text-center text-secondary-700 mb-8 max-w-2xl mx-auto">
+              Interact with real implementations of post-quantum algorithms. Generate keys, create signatures, and encrypt messages in your browser.
+            </p>
+            
+            <div className="grid md:grid-cols-3 gap-6">
+              {/* ML-KEM Interactive Card */}
+              <Link href="/ml-kem/try-mlkem" className="group">
+                <div className="bg-white rounded-xl shadow-md overflow-hidden hover:shadow-lg transition-all duration-300 transform group-hover:translate-y-[-4px] h-full flex flex-col">
+                  <div className="h-3 bg-primary-600"></div>
+                  <div className="p-6 flex-1 flex flex-col">
+                    <div className="flex items-center mb-4">
+                      <div className="bg-primary-100 p-3 rounded-lg mr-4">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-primary-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                        </svg>
+                      </div>
+                      <h3 className="text-xl font-semibold text-primary-800">ML-KEM Interactive</h3>
+                    </div>
+                    <p className="text-secondary-700 mb-4 flex-1">
+                      Generate key pairs, encapsulate and decapsulate shared secrets, and encrypt messages using AES with ML-KEM derived keys.
+                    </p>
+                    <div className="flex items-center text-primary-700 group-hover:text-primary-900 transition-colors">
+                      Try it now 
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 ml-1 group-hover:translate-x-1 transition-transform" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M12.293 5.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-2.293-2.293a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+              </Link>
+
+              {/* ML-DSA Interactive Card */}
+              <Link href="/ml-dsa/try-mldsa" className="group">
+                <div className="bg-white rounded-xl shadow-md overflow-hidden hover:shadow-lg transition-all duration-300 transform group-hover:translate-y-[-4px] h-full flex flex-col">
+                  <div className="h-3 bg-accent-600"></div>
+                  <div className="p-6 flex-1 flex flex-col">
+                    <div className="flex items-center mb-4">
+                      <div className="bg-accent-100 p-3 rounded-lg mr-4">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-accent-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                        </svg>
+                      </div>
+                      <h3 className="text-xl font-semibold text-accent-800">ML-DSA Interactive</h3>
+                    </div>
+                    <p className="text-secondary-700 mb-4 flex-1">
+                      Create lattice-based digital signatures for messages and files, verify signatures, and visualize the underlying mathematical structures.
+                    </p>
+                    <div className="flex items-center text-accent-700 group-hover:text-accent-900 transition-colors">
+                      Try it now 
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 ml-1 group-hover:translate-x-1 transition-transform" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M12.293 5.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-2.293-2.293a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+              </Link>
+
+              {/* SLH-DSA Interactive Card */}
+              <Link href="/slh-dsa/try-slhdsa" className="group">
+                <div className="bg-white rounded-xl shadow-md overflow-hidden hover:shadow-lg transition-all duration-300 transform group-hover:translate-y-[-4px] h-full flex flex-col">
+                  <div className="h-3 bg-secondary-600"></div>
+                  <div className="p-6 flex-1 flex flex-col">
+                    <div className="flex items-center mb-4">
+                      <div className="bg-secondary-100 p-3 rounded-lg mr-4">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-secondary-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 11l5-5m0 0l5 5m-5-5v12" />
+                        </svg>
+                      </div>
+                      <h3 className="text-xl font-semibold text-secondary-800">SLH-DSA Interactive</h3>
+                    </div>
+                    <p className="text-secondary-700 mb-4 flex-1">
+                      Generate hash-based signatures with SLH-DSA, sign files and messages, and verify signatures with multiple security levels.
+                    </p>
+                    <div className="flex items-center text-secondary-700 group-hover:text-secondary-900 transition-colors">
+                      Try it now 
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 ml-1 group-hover:translate-x-1 transition-transform" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M12.293 5.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-2.293-2.293a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+              </Link>
+            </div>
+          </div>
+        </section>
+
         {/* Why PQC section with improved text contrast */}
         <section className="py-16 bg-white">
           <div className="container mx-auto px-4 md:px-8 max-w-4xl">

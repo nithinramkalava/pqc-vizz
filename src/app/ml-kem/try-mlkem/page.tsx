@@ -3,39 +3,40 @@
 import React, { useState, useEffect } from 'react';
 import { ml_kem } from 'pqc';
 import Link from 'next/link';
+import LatticeVisualizer from '../../components/LatticeVisualizer';
 
-// Binary visualizer component
-const BinaryVisualizer = ({ data, maxBits = 512 }: { data: Uint8Array | null, maxBits?: number }) => {
-  if (!data) return null;
+// Binary visualizer component - keeping for backward compatibility
+// const BinaryVisualizer = ({ data, maxBits = 512 }: { data: Uint8Array | null, maxBits?: number }) => {
+//   if (!data) return null;
   
-  // Convert bytes to bits
-  const bits: boolean[] = [];
-  for (let i = 0; i < Math.min(data.length, Math.ceil(maxBits / 8)); i++) {
-    const byte = data[i];
-    for (let bit = 7; bit >= 0; bit--) {
-      if (bits.length < maxBits) {
-        bits.push(Boolean((byte >> bit) & 1));
-      }
-    }
-  }
+//   // Convert bytes to bits
+//   const bits: boolean[] = [];
+//   for (let i = 0; i < Math.min(data.length, Math.ceil(maxBits / 8)); i++) {
+//     const byte = data[i];
+//     for (let bit = 7; bit >= 0; bit--) {
+//       if (bits.length < maxBits) {
+//         bits.push(Boolean((byte >> bit) & 1));
+//       }
+//     }
+//   }
   
-  return (
-    <div className="mt-3 grid grid-cols-8 gap-[1px] bg-secondary-100 p-1 rounded-md overflow-hidden">
-      {bits.map((bit, i) => (
-        <div 
-          key={i} 
-          className={`h-3 w-full ${bit ? 'bg-primary-600' : 'bg-secondary-200'}`}
-          title={`Bit ${i}: ${bit ? '1' : '0'}`}
-        />
-      ))}
-      {data.length * 8 > maxBits && (
-        <div className="col-span-8 text-xs text-center text-secondary-600 mt-1">
-          Showing first {maxBits} of {data.length * 8} bits
-        </div>
-      )}
-    </div>
-  );
-};
+//   return (
+//     <div className="mt-3 grid grid-cols-8 gap-[1px] bg-secondary-100 p-1 rounded-md overflow-hidden">
+//       {bits.map((bit, i) => (
+//         <div 
+//           key={i} 
+//           className={`h-3 w-full ${bit ? 'bg-primary-600' : 'bg-secondary-200'}`}
+//           title={`Bit ${i}: ${bit ? '1' : '0'}`}
+//         />
+//       ))}
+//       {data.length * 8 > maxBits && (
+//         <div className="col-span-8 text-xs text-center text-secondary-600 mt-1">
+//           Showing first {maxBits} of {data.length * 8} bits
+//         </div>
+//       )}
+//     </div>
+//   );
+// };
 
 export default function TryMLKEMPage() {
   const [securityLevel, setSecurityLevel] = useState<'ml_kem512' | 'ml_kem768' | 'ml_kem1024'>('ml_kem512');
@@ -58,12 +59,12 @@ export default function TryMLKEMPage() {
   const [expandedSharedSecret, setExpandedSharedSecret] = useState(false);
   const [expandedDecapsulatedSecret, setExpandedDecapsulatedSecret] = useState(false);
 
-  // Binary visualization states
-  const [showBinaryPublicKey, setShowBinaryPublicKey] = useState(false);
-  const [showBinarySecretKey, setShowBinarySecretKey] = useState(false);
-  const [showBinaryCipherText, setShowBinaryCipherText] = useState(false);
-  const [showBinarySharedSecret, setShowBinarySharedSecret] = useState(false);
-  const [showBinaryDecapsulatedSecret, setShowBinaryDecapsulatedSecret] = useState(false);
+  // Instead of binary visualization states, we'll use lattice states
+  const [showLatticePublicKey, setShowLatticePublicKey] = useState(false);
+  const [showLatticeSecretKey, setShowLatticeSecretKey] = useState(false);
+  const [showLatticeCipherText, setShowLatticeCipherText] = useState(false);
+  const [showLatticeSharedSecret, setShowLatticeSharedSecret] = useState(false);
+  const [showLatticeDecapsulatedSecret, setShowLatticeDecapsulatedSecret] = useState(false);
   
   // Log function to track operations
   const log = (message: string) => {
@@ -85,11 +86,11 @@ export default function TryMLKEMPage() {
     setExpandedCipherText(false);
     setExpandedSharedSecret(false);
     setExpandedDecapsulatedSecret(false);
-    setShowBinaryPublicKey(false);
-    setShowBinarySecretKey(false);
-    setShowBinaryCipherText(false);
-    setShowBinarySharedSecret(false);
-    setShowBinaryDecapsulatedSecret(false);
+    setShowLatticePublicKey(false);
+    setShowLatticeSecretKey(false);
+    setShowLatticeCipherText(false);
+    setShowLatticeSharedSecret(false);
+    setShowLatticeDecapsulatedSecret(false);
     setLogs([`Security level changed to ${securityLevel}`]);
   }, [securityLevel]);
 
@@ -272,7 +273,22 @@ export default function TryMLKEMPage() {
   };
   
   // Copy to clipboard function
-  const copyToClipboard = (text: string, label: string) => {
+  const copyArrayToClipboard = (data: Uint8Array | null, label: string) => {
+    if (!data) return;
+    
+    const arrayStr = `[${Array.from(data).join(', ')}]`;
+    navigator.clipboard.writeText(arrayStr).then(
+      () => {
+        log(`Copied ${label} to clipboard in array format`);
+      },
+      () => {
+        log(`Failed to copy ${label} to clipboard`);
+      }
+    );
+  };
+
+  // Add a specialized copy function for text
+  const copyTextToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text).then(
       () => {
         log(`Copied ${label} to clipboard`);
@@ -344,7 +360,7 @@ export default function TryMLKEMPage() {
                           {expandedPublicKey ? "Collapse" : "Expand"}
                         </button>
                         <button 
-                          onClick={() => copyToClipboard(bytesToHex(keyPair.publicKey), "Public Key")}
+                          onClick={() => copyArrayToClipboard(keyPair.publicKey, "Public Key")}
                           className="text-xs px-2 py-1 bg-primary-100 text-primary-700 rounded hover:bg-primary-200"
                         >
                           Copy
@@ -354,21 +370,21 @@ export default function TryMLKEMPage() {
                     <div className="bg-secondary-50 p-3 rounded-lg overflow-x-auto">
                       <code className="text-xs text-secondary-700 break-all">
                         {expandedPublicKey 
-                          ? bytesToHex(keyPair.publicKey)
-                          : bytesToHex(keyPair.publicKey).substring(0, 64) + "..."}
+                          ? `[${Array.from(keyPair.publicKey).join(', ')}]`
+                          : `[${Array.from(keyPair.publicKey).slice(0, 20).join(', ')}${keyPair.publicKey.length > 20 ? ', ...' : ''}]`}
                       </code>
                     </div>
                     <div className="text-xs text-secondary-600 mt-1 flex justify-between">
                       <span>{keyPair.publicKey.length} bytes</span>
                       <button 
-                        onClick={() => setShowBinaryPublicKey(!showBinaryPublicKey)}
+                        onClick={() => setShowLatticePublicKey(!showLatticePublicKey)}
                         className="text-primary-600 hover:text-primary-800 underline text-xs"
                       >
-                        {showBinaryPublicKey ? "Hide Lattice" : "Show Lattice"}
+                        {showLatticePublicKey ? "Lattice" : "Lattice"}
                       </button>
                     </div>
-                    {showBinaryPublicKey && (
-                      <BinaryVisualizer data={keyPair.publicKey} />
+                    {showLatticePublicKey && (
+                      <LatticeVisualizer data={keyPair.publicKey} label="Public Key" />
                     )}
                   </div>
 
@@ -383,7 +399,7 @@ export default function TryMLKEMPage() {
                           {expandedSecretKey ? "Collapse" : "Expand"}
                         </button>
                         <button 
-                          onClick={() => copyToClipboard(bytesToHex(keyPair.secretKey), "Secret Key")}
+                          onClick={() => copyArrayToClipboard(keyPair.secretKey, "Secret Key")}
                           className="text-xs px-2 py-1 bg-primary-100 text-primary-700 rounded hover:bg-primary-200"
                         >
                           Copy
@@ -393,21 +409,21 @@ export default function TryMLKEMPage() {
                     <div className="bg-secondary-50 p-3 rounded-lg overflow-x-auto">
                       <code className="text-xs text-secondary-700 break-all">
                         {expandedSecretKey 
-                          ? bytesToHex(keyPair.secretKey)
-                          : bytesToHex(keyPair.secretKey).substring(0, 64) + "..."}
+                          ? `[${Array.from(keyPair.secretKey).join(', ')}]`
+                          : `[${Array.from(keyPair.secretKey).slice(0, 20).join(', ')}${keyPair.secretKey.length > 20 ? ', ...' : ''}]`}
                       </code>
                     </div>
                     <div className="text-xs text-secondary-600 mt-1 flex justify-between">
                       <span>{keyPair.secretKey.length} bytes</span>
                       <button 
-                        onClick={() => setShowBinarySecretKey(!showBinarySecretKey)}
+                        onClick={() => setShowLatticeSecretKey(!showLatticeSecretKey)}
                         className="text-primary-600 hover:text-primary-800 underline text-xs"
                       >
-                        {showBinarySecretKey ? "Hide Lattice" : "Show Lattice"}
+                        {showLatticeSecretKey ? "Lattice" : "Lattice"}
                       </button>
                     </div>
-                    {showBinarySecretKey && (
-                      <BinaryVisualizer data={keyPair.secretKey} />
+                    {showLatticeSecretKey && (
+                      <LatticeVisualizer data={keyPair.secretKey} label="Secret Key" />
                     )}
                   </div>
                 </div>
@@ -445,7 +461,7 @@ export default function TryMLKEMPage() {
                           {expandedCipherText ? "Collapse" : "Expand"}
                         </button>
                         <button 
-                          onClick={() => copyToClipboard(bytesToHex(cipherText), "Cipher Text")}
+                          onClick={() => copyArrayToClipboard(cipherText, "Cipher Text")}
                           className="text-xs px-2 py-1 bg-primary-100 text-primary-700 rounded hover:bg-primary-200"
                         >
                           Copy
@@ -455,21 +471,21 @@ export default function TryMLKEMPage() {
                     <div className="bg-secondary-50 p-3 rounded-lg overflow-x-auto">
                       <code className="text-xs text-secondary-700 break-all">
                         {expandedCipherText 
-                          ? bytesToHex(cipherText)
-                          : bytesToHex(cipherText).substring(0, 64) + "..."}
+                          ? `[${Array.from(cipherText).join(', ')}]`
+                          : `[${Array.from(cipherText).slice(0, 20).join(', ')}${cipherText.length > 20 ? ', ...' : ''}]`}
                       </code>
                     </div>
                     <div className="text-xs text-secondary-600 mt-1 flex justify-between">
                       <span>{cipherText.length} bytes</span>
                       <button 
-                        onClick={() => setShowBinaryCipherText(!showBinaryCipherText)}
+                        onClick={() => setShowLatticeCipherText(!showLatticeCipherText)}
                         className="text-primary-600 hover:text-primary-800 underline text-xs"
                       >
-                        {showBinaryCipherText ? "Hide Lattice" : "Show Lattice"}
+                        {showLatticeCipherText ? "Lattice" : "Lattice"}
                       </button>
                     </div>
-                    {showBinaryCipherText && (
-                      <BinaryVisualizer data={cipherText} />
+                    {showLatticeCipherText && (
+                      <LatticeVisualizer data={cipherText} label="Cipher Text" />
                     )}
                   </div>
 
@@ -484,7 +500,7 @@ export default function TryMLKEMPage() {
                           {expandedSharedSecret ? "Collapse" : "Expand"}
                         </button>
                         <button 
-                          onClick={() => copyToClipboard(bytesToHex(sharedSecret), "Shared Secret")}
+                          onClick={() => copyArrayToClipboard(sharedSecret, "Shared Secret")}
                           className="text-xs px-2 py-1 bg-primary-100 text-primary-700 rounded hover:bg-primary-200"
                         >
                           Copy
@@ -494,21 +510,21 @@ export default function TryMLKEMPage() {
                     <div className="bg-secondary-50 p-3 rounded-lg overflow-x-auto">
                       <code className="text-xs text-secondary-700 break-all">
                         {expandedSharedSecret 
-                          ? bytesToHex(sharedSecret)
-                          : bytesToHex(sharedSecret).substring(0, 64) + "..."}
+                          ? `[${Array.from(sharedSecret).join(', ')}]`
+                          : `[${Array.from(sharedSecret).slice(0, 20).join(', ')}${sharedSecret.length > 20 ? ', ...' : ''}]`}
                       </code>
                     </div>
                     <div className="text-xs text-secondary-600 mt-1 flex justify-between">
                       <span>{sharedSecret.length} bytes</span>
                       <button 
-                        onClick={() => setShowBinarySharedSecret(!showBinarySharedSecret)}
+                        onClick={() => setShowLatticeSharedSecret(!showLatticeSharedSecret)}
                         className="text-primary-600 hover:text-primary-800 underline text-xs"
                       >
-                        {showBinarySharedSecret ? "Hide Lattice" : "Show Lattice"}
+                        {showLatticeSharedSecret ? "Lattice" : "Lattice"}
                       </button>
                     </div>
-                    {showBinarySharedSecret && (
-                      <BinaryVisualizer data={sharedSecret} />
+                    {showLatticeSharedSecret && (
+                      <LatticeVisualizer data={sharedSecret} label="Shared Secret" />
                     )}
                   </div>
                 </div>
@@ -546,7 +562,7 @@ export default function TryMLKEMPage() {
                           {expandedDecapsulatedSecret ? "Collapse" : "Expand"}
                         </button>
                         <button 
-                          onClick={() => copyToClipboard(bytesToHex(decapsulatedSecret), "Decapsulated Secret")}
+                          onClick={() => copyArrayToClipboard(decapsulatedSecret, "Decapsulated Secret")}
                           className="text-xs px-2 py-1 bg-primary-100 text-primary-700 rounded hover:bg-primary-200"
                         >
                           Copy
@@ -556,21 +572,21 @@ export default function TryMLKEMPage() {
                     <div className="bg-secondary-50 p-3 rounded-lg overflow-x-auto">
                       <code className="text-xs text-secondary-700 break-all">
                         {expandedDecapsulatedSecret 
-                          ? bytesToHex(decapsulatedSecret)
-                          : bytesToHex(decapsulatedSecret).substring(0, 64) + "..."}
+                          ? `[${Array.from(decapsulatedSecret).join(', ')}]`
+                          : `[${Array.from(decapsulatedSecret).slice(0, 20).join(', ')}${decapsulatedSecret.length > 20 ? ', ...' : ''}]`}
                       </code>
                     </div>
                     <div className="text-xs text-secondary-600 mt-1 flex justify-between">
                       <span>{decapsulatedSecret.length} bytes</span>
                       <button 
-                        onClick={() => setShowBinaryDecapsulatedSecret(!showBinaryDecapsulatedSecret)}
+                        onClick={() => setShowLatticeDecapsulatedSecret(!showLatticeDecapsulatedSecret)}
                         className="text-primary-600 hover:text-primary-800 underline text-xs"
                       >
-                        {showBinaryDecapsulatedSecret ? "Hide Lattice" : "Show Lattice"}
+                        {showLatticeDecapsulatedSecret ? "Lattice" : "Lattice"}
                       </button>
                     </div>
-                    {showBinaryDecapsulatedSecret && (
-                      <BinaryVisualizer data={decapsulatedSecret} />
+                    {showLatticeDecapsulatedSecret && (
+                      <LatticeVisualizer data={decapsulatedSecret} label="Decapsulated Secret" />
                     )}
                   </div>
 
@@ -628,14 +644,14 @@ export default function TryMLKEMPage() {
                       <div className="font-medium text-secondary-800 mb-1 flex justify-between items-center">
                         <span>Encrypted Message:</span>
                         <button 
-                          onClick={() => copyToClipboard(encryptedMessage, "Encrypted Message")}
+                          onClick={() => copyTextToClipboard(encryptedMessage, "Encrypted Message")}
                           className="text-xs px-2 py-1 bg-primary-100 text-primary-700 rounded hover:bg-primary-200"
                         >
                           Copy
                         </button>
                       </div>
-                      <div className="bg-secondary-50 p-3 rounded-lg overflow-x-auto break-all">
-                        <code className="text-xs text-secondary-700">
+                      <div className="bg-secondary-50 p-3 rounded-lg overflow-x-auto">
+                        <code className="text-xs text-secondary-700 break-all">
                           {encryptedMessage.length > 128 
                             ? encryptedMessage.substring(0, 128) + "..."
                             : encryptedMessage}
@@ -691,7 +707,7 @@ export default function TryMLKEMPage() {
                       <div className="font-medium text-secondary-800 mb-1 flex justify-between items-center">
                         <span>Decrypted Message:</span>
                         <button 
-                          onClick={() => copyToClipboard(decryptedText, "Decrypted Message")}
+                          onClick={() => copyTextToClipboard(decryptedText, "Decrypted Message")}
                           className="text-xs px-2 py-1 bg-primary-100 text-primary-700 rounded hover:bg-primary-200"
                         >
                           Copy

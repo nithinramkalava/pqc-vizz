@@ -3,39 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { ml_dsa } from 'pqc';
 import Link from 'next/link';
-
-// Binary visualizer component
-const BinaryVisualizer = ({ data, maxBits = 512 }: { data: Uint8Array | null, maxBits?: number }) => {
-  if (!data) return null;
-  
-  // Convert bytes to bits
-  const bits: boolean[] = [];
-  for (let i = 0; i < Math.min(data.length, Math.ceil(maxBits / 8)); i++) {
-    const byte = data[i];
-    for (let bit = 7; bit >= 0; bit--) {
-      if (bits.length < maxBits) {
-        bits.push(Boolean((byte >> bit) & 1));
-      }
-    }
-  }
-  
-  return (
-    <div className="mt-3 grid grid-cols-8 gap-[1px] bg-secondary-100 p-1 rounded-md overflow-hidden">
-      {bits.map((bit, i) => (
-        <div 
-          key={i} 
-          className={`h-3 w-full ${bit ? 'bg-accent-600' : 'bg-secondary-200'}`}
-          title={`Bit ${i}: ${bit ? '1' : '0'}`}
-        />
-      ))}
-      {data.length * 8 > maxBits && (
-        <div className="col-span-8 text-xs text-center text-secondary-600 mt-1">
-          Showing first {maxBits} of {data.length * 8} bits
-        </div>
-      )}
-    </div>
-  );
-};
+import LatticeVisualizer from '../../components/LatticeVisualizer';
 
 export default function TryMLDSAPage() {
   const [algorithm, setAlgorithm] = useState<'ml_dsa44' | 'ml_dsa65' | 'ml_dsa87'>('ml_dsa44');
@@ -55,7 +23,8 @@ export default function TryMLDSAPage() {
   const [externalPublicKey, setExternalPublicKey] = useState('');
   const [externalSignature, setExternalSignature] = useState('');
   const [externalAlgorithm, setExternalAlgorithm] = useState<'ml_dsa44' | 'ml_dsa65' | 'ml_dsa87'>('ml_dsa44');
-  const [externalVerifyResult, setExternalVerifyResult] = useState<boolean | null>(null);
+  const [externalVerificationResult, setExternalVerificationResult] = useState('');
+  const [externalVerificationSuccess, setExternalVerificationSuccess] = useState(false);
   
   // Expanded states
   const [expandedPublicKey, setExpandedPublicKey] = useState(false);
@@ -63,11 +32,11 @@ export default function TryMLDSAPage() {
   const [expandedSignature, setExpandedSignature] = useState(false);
   const [expandedFileSignature, setExpandedFileSignature] = useState(false);
 
-  // Binary visualization states
-  const [showBinaryPublicKey, setShowBinaryPublicKey] = useState(false);
-  const [showBinarySecretKey, setShowBinarySecretKey] = useState(false);
-  const [showBinarySignature, setShowBinarySignature] = useState(false);
-  const [showBinaryFileSignature, setShowBinaryFileSignature] = useState(false);
+  // Matrix visualization states
+  const [showMatrixPublicKey, setShowMatrixPublicKey] = useState(false);
+  const [showMatrixSecretKey, setShowMatrixSecretKey] = useState(false);
+  const [showMatrixSignature, setShowMatrixSignature] = useState(false);
+  const [showMatrixFileSignature, setShowMatrixFileSignature] = useState(false);
 
   // Log function to track operations
   const log = (message: string) => {
@@ -87,12 +56,24 @@ export default function TryMLDSAPage() {
     setExpandedSecretKey(false);
     setExpandedSignature(false);
     setExpandedFileSignature(false);
-    setShowBinaryPublicKey(false);
-    setShowBinarySecretKey(false);
-    setShowBinarySignature(false);
-    setShowBinaryFileSignature(false);
+    setShowMatrixPublicKey(false);
+    setShowMatrixSecretKey(false);
+    setShowMatrixSignature(false);
+    setShowMatrixFileSignature(false);
     setLogs([`Algorithm changed to ${algorithm}`]);
   }, [algorithm]);
+
+  // Copy function to copy array format
+  const copyTextToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text).then(
+      () => {
+        log(`Copied ${label} to clipboard`);
+      },
+      () => {
+        log(`Failed to copy ${label} to clipboard`);
+      }
+    );
+  };
 
   // Generate new key pair
   const generateKeyPair = () => {
@@ -214,31 +195,32 @@ export default function TryMLDSAPage() {
     }
   };
   
-  // Convert Uint8Array to hex string for display
-  const bytesToHex = (bytes: Uint8Array | null): string => {
-    if (!bytes) return '';
-    return Array.from(bytes)
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('');
-  };
-
-  // Copy to clipboard function
-  const copyToClipboard = (text: string, label: string) => {
-    navigator.clipboard.writeText(text).then(
-      () => {
-        log(`Copied ${label} to clipboard`);
-      },
-      () => {
-        log(`Failed to copy ${label} to clipboard`);
+  // Convert hex string back to Uint8Array
+  const hexToBytes = (hex: string): Uint8Array => {
+    // Check if it's in array format [1, 2, 3]
+    if (hex.trim().startsWith('[') && hex.trim().endsWith(']')) {
+      try {
+        // Parse the array format
+        const numberArray = JSON.parse(hex);
+        if (Array.isArray(numberArray) && numberArray.every(n => typeof n === 'number')) {
+          return new Uint8Array(numberArray);
+        }
+      } catch (e) {
+        // If parsing fails, continue with hex parsing
+        console.error("Failed to parse input as array:", e);
       }
-    );
+    }
+
+    // Remove any non-hex characters (spaces, line breaks, etc.)
+    const cleanHex = hex.replace(/[^0-9a-fA-F]/g, '');
+    const hexChars = cleanHex.match(/.{1,2}/g) || [];
+    return new Uint8Array(hexChars.map(byte => parseInt(byte, 16)));
   };
 
   // Handle external file selection
   const handleExternalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       setExternalFile(e.target.files[0]);
-      setExternalVerifyResult(null);
       log(`External file selected: ${e.target.files[0].name} (${e.target.files[0].size} bytes)`);
     }
   };
@@ -247,37 +229,56 @@ export default function TryMLDSAPage() {
   const verifyExternalSignature = async () => {
     if (!externalFile || !externalPublicKey || !externalSignature) {
       log('Need file, public key, and signature to verify');
+      setExternalVerificationResult("Please provide all required values.");
+      setExternalVerificationSuccess(false);
       return;
     }
     
     try {
+      // Function to parse the input value (either array or hex)
+      const parseInputValue = (value: string): Uint8Array => {
+        // Try to parse as array format [1, 2, 3, ...]
+        if (value.trim().startsWith('[') && value.trim().endsWith(']')) {
+          try {
+            const arrayData = JSON.parse(value);
+            if (Array.isArray(arrayData)) {
+              return new Uint8Array(arrayData);
+            }
+          } catch (err) {
+            console.error("Failed to parse input as array:", err);
+          }
+        }
+        
+        // Fallback to hex format
+        return hexToBytes(value.replace(/\s+/g, ''));
+      };
+      
       const selectedAlgorithm = ml_dsa[externalAlgorithm];
       
       // Read file as array buffer
       const fileBuffer = await externalFile.arrayBuffer();
       const fileBytes = new Uint8Array(fileBuffer);
       
-      // Convert hex strings to bytes
-      const publicKeyBytes = hexToBytes(externalPublicKey);
-      const signatureBytes = hexToBytes(externalSignature);
+      // Convert inputs to bytes
+      const publicKeyBytes = parseInputValue(externalPublicKey);
+      const signatureBytes = parseInputValue(externalSignature);
       
       // Verify the signature
       const isValid = selectedAlgorithm.verify(publicKeyBytes, fileBytes, signatureBytes);
       
-      setExternalVerifyResult(isValid);
+      setExternalVerificationResult(
+        isValid ? "Verification Successful ✓ The file is authentic and hasn't been tampered with." 
+        : "Verification Failed ✗ The file may have been tampered with or the wrong key was used."
+      );
+      setExternalVerificationSuccess(isValid);
       log(`External signature verification result: ${isValid ? 'VALID' : 'INVALID'}`);
-    } catch (error) {
-      log(`External verification error: ${error}`);
-      setExternalVerifyResult(false);
+    } catch (error: unknown) {
+      console.error("Verification error:", error);
+      const errorMessage = error instanceof Error ? error.message : "Invalid input format";
+      setExternalVerificationResult(`Error: ${errorMessage}`);
+      setExternalVerificationSuccess(false);
+      log(`External verification error: ${errorMessage}`);
     }
-  };
-  
-  // Convert hex string back to Uint8Array
-  const hexToBytes = (hex: string): Uint8Array => {
-    // Remove any non-hex characters (spaces, line breaks, etc.)
-    const cleanHex = hex.replace(/[^0-9a-fA-F]/g, '');
-    const hexChars = cleanHex.match(/.{1,2}/g) || [];
-    return new Uint8Array(hexChars.map(byte => parseInt(byte, 16)));
   };
 
   return (
@@ -338,7 +339,7 @@ export default function TryMLDSAPage() {
                           {expandedPublicKey ? "Collapse" : "Expand"}
                         </button>
                         <button 
-                          onClick={() => copyToClipboard(bytesToHex(keyPair.publicKey), "Public Key")}
+                          onClick={() => copyTextToClipboard(`[${Array.from(keyPair.publicKey).join(', ')}]`, "Public Key")}
                           className="text-xs px-2 py-1 bg-accent-100 text-accent-700 rounded hover:bg-accent-200"
                         >
                           Copy
@@ -348,21 +349,21 @@ export default function TryMLDSAPage() {
                     <div className="bg-secondary-50 p-3 rounded-lg overflow-x-auto">
                       <code className="text-xs text-secondary-700 break-all">
                         {expandedPublicKey 
-                          ? bytesToHex(keyPair.publicKey)
-                          : bytesToHex(keyPair.publicKey).substring(0, 64) + "..."}
+                          ? `[${Array.from(keyPair.publicKey).join(', ')}]`
+                          : `[${Array.from(keyPair.publicKey).slice(0, 20).join(', ')}${keyPair.publicKey.length > 20 ? ', ...' : ''}]`}
                       </code>
                     </div>
                     <div className="text-xs text-secondary-600 mt-1 flex justify-between">
                       <span>{keyPair.publicKey.length} bytes</span>
                       <button 
-                        onClick={() => setShowBinaryPublicKey(!showBinaryPublicKey)}
+                        onClick={() => setShowMatrixPublicKey(!showMatrixPublicKey)}
                         className="text-accent-600 hover:text-accent-800 underline text-xs"
                       >
-                        {showBinaryPublicKey ? "Hide Lattice" : "Show Lattice"}
+                        {showMatrixPublicKey ? "Lattice" : "Lattice"}
                       </button>
                     </div>
-                    {showBinaryPublicKey && (
-                      <BinaryVisualizer data={keyPair.publicKey} />
+                    {showMatrixPublicKey && (
+                      <LatticeVisualizer data={keyPair.publicKey} label="Public Key" />
                     )}
                   </div>
                   
@@ -377,7 +378,7 @@ export default function TryMLDSAPage() {
                           {expandedSecretKey ? "Collapse" : "Expand"}
                         </button>
                         <button 
-                          onClick={() => copyToClipboard(bytesToHex(keyPair.secretKey), "Secret Key")}
+                          onClick={() => copyTextToClipboard(`[${Array.from(keyPair.secretKey).join(', ')}]`, "Secret Key")}
                           className="text-xs px-2 py-1 bg-accent-100 text-accent-700 rounded hover:bg-accent-200"
                         >
                           Copy
@@ -387,21 +388,21 @@ export default function TryMLDSAPage() {
                     <div className="bg-secondary-50 p-3 rounded-lg overflow-x-auto">
                       <code className="text-xs text-secondary-700 break-all">
                         {expandedSecretKey 
-                          ? bytesToHex(keyPair.secretKey)
-                          : bytesToHex(keyPair.secretKey).substring(0, 64) + "..."}
+                          ? `[${Array.from(keyPair.secretKey).join(', ')}]`
+                          : `[${Array.from(keyPair.secretKey).slice(0, 20).join(', ')}${keyPair.secretKey.length > 20 ? ', ...' : ''}]`}
                       </code>
                     </div>
                     <div className="text-xs text-secondary-600 mt-1 flex justify-between">
                       <span>{keyPair.secretKey.length} bytes</span>
                       <button 
-                        onClick={() => setShowBinarySecretKey(!showBinarySecretKey)}
+                        onClick={() => setShowMatrixSecretKey(!showMatrixSecretKey)}
                         className="text-accent-600 hover:text-accent-800 underline text-xs"
                       >
-                        {showBinarySecretKey ? "Hide Lattice" : "Show Lattice"}
+                        {showMatrixSecretKey ? "Lattice" : "Lattice"}
                       </button>
                     </div>
-                    {showBinarySecretKey && (
-                      <BinaryVisualizer data={keyPair.secretKey} />
+                    {showMatrixSecretKey && (
+                      <LatticeVisualizer data={keyPair.secretKey} label="Secret Key" />
                     )}
                   </div>
                 </div>
@@ -467,7 +468,7 @@ export default function TryMLDSAPage() {
                             {expandedSignature ? "Collapse" : "Expand"}
                           </button>
                           <button 
-                            onClick={() => copyToClipboard(bytesToHex(signature), "Signature")}
+                            onClick={() => copyTextToClipboard(`[${Array.from(signature).join(', ')}]`, "Signature")}
                             className="text-xs px-2 py-1 bg-accent-100 text-accent-700 rounded hover:bg-accent-200"
                           >
                             Copy
@@ -477,21 +478,21 @@ export default function TryMLDSAPage() {
                       <div className="bg-secondary-50 p-3 rounded-lg overflow-x-auto">
                         <code className="text-xs text-secondary-700 break-all">
                           {expandedSignature 
-                            ? bytesToHex(signature)
-                            : bytesToHex(signature).substring(0, 64) + "..."}
+                            ? `[${Array.from(signature).join(', ')}]`
+                            : `[${Array.from(signature).slice(0, 20).join(', ')}${signature.length > 20 ? ', ...' : ''}]`}
                         </code>
                       </div>
                       <div className="text-xs text-secondary-600 mt-1 flex justify-between">
                         <span>{signature.length} bytes</span>
                         <button 
-                          onClick={() => setShowBinarySignature(!showBinarySignature)}
+                          onClick={() => setShowMatrixSignature(!showMatrixSignature)}
                           className="text-accent-600 hover:text-accent-800 underline text-xs"
                         >
-                          {showBinarySignature ? "Hide Lattice" : "Show Lattice"}
+                          {showMatrixSignature ? "Lattice" : "Lattice"}
                         </button>
                       </div>
-                      {showBinarySignature && (
-                        <BinaryVisualizer data={signature} />
+                      {showMatrixSignature && (
+                        <LatticeVisualizer data={signature} label="Signature" />
                       )}
                     </div>
                   )}
@@ -575,7 +576,7 @@ export default function TryMLDSAPage() {
                             {expandedFileSignature ? "Collapse" : "Expand"}
                           </button>
                           <button 
-                            onClick={() => copyToClipboard(bytesToHex(fileSignature), "File Signature")}
+                            onClick={() => copyTextToClipboard(`[${Array.from(fileSignature).join(', ')}]`, "File Signature")}
                             className="text-xs px-2 py-1 bg-accent-100 text-accent-700 rounded hover:bg-accent-200"
                           >
                             Copy
@@ -585,23 +586,23 @@ export default function TryMLDSAPage() {
                       <div className="bg-secondary-50 p-3 rounded-lg overflow-x-auto">
                         <code className="text-xs text-secondary-700 break-all">
                           {expandedFileSignature 
-                            ? bytesToHex(fileSignature)
-                            : bytesToHex(fileSignature).substring(0, 64) + "..."}
+                            ? `[${Array.from(fileSignature).join(', ')}]`
+                            : `[${Array.from(fileSignature).slice(0, 20).join(', ')}${fileSignature.length > 20 ? ', ...' : ''}]`}
                         </code>
                       </div>
                       <div className="text-xs text-secondary-600 mt-1 flex justify-between">
                         <span>{fileSignature.length} bytes</span>
                         <button 
-                          onClick={() => setShowBinaryFileSignature(!showBinaryFileSignature)}
+                          onClick={() => setShowMatrixFileSignature(!showMatrixFileSignature)}
                           className="text-accent-600 hover:text-accent-800 underline text-xs"
                         >
-                          {showBinaryFileSignature ? "Hide Lattice" : "Show Lattice"}
+                          {showMatrixFileSignature ? "Lattice" : "Lattice"}
                         </button>
                       </div>
-                      {showBinaryFileSignature && (
-                        <BinaryVisualizer data={fileSignature} />
+                      {showMatrixFileSignature && (
+                        <LatticeVisualizer data={fileSignature} label="File Signature" />
                       )}
-                      
+
                       <button 
                         onClick={() => {
                           const blob = new Blob([fileSignature], { type: 'application/octet-stream' });
@@ -669,27 +670,39 @@ export default function TryMLDSAPage() {
                     className="block w-full text-secondary-700 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-accent-50 file:text-accent-700 hover:file:bg-accent-100"
                   />
                 </div>
+                {externalFile && (
+                  <div className="bg-secondary-50 p-3 rounded-lg">
+                    <div className="font-medium text-secondary-800">Selected File:</div>
+                    <div className="text-secondary-700">{externalFile.name} ({Math.round(externalFile.size / 1024)} KB)</div>
+                  </div>
+                )}
                 
                 <div className="space-y-3">
-                  <label className="block font-medium text-secondary-800">Public Key (hex format):</label>
+                  <label className="block font-medium text-secondary-800">Public Key (hex or array format):</label>
                   <textarea
                     value={externalPublicKey}
                     onChange={(e) => setExternalPublicKey(e.target.value)}
-                    placeholder="Paste the public key in hex format..."
+                    placeholder="Paste the public key in hex format or as array like [1, 2, 3, ...]"
                     className="w-full p-3 border border-secondary-200 rounded-lg text-secondary-800 focus:outline-none focus:ring-2 focus:ring-accent-500 font-mono text-sm"
                     rows={3}
                   />
                 </div>
                 
                 <div className="space-y-3">
-                  <label className="block font-medium text-secondary-800">Signature (hex format):</label>
+                  <label className="block font-medium text-secondary-800">Signature (hex or array format):</label>
                   <textarea
                     value={externalSignature}
                     onChange={(e) => setExternalSignature(e.target.value)}
-                    placeholder="Paste the signature in hex format..."
+                    placeholder="Paste the signature in hex format or as array like [1, 2, 3, ...]"
                     className="w-full p-3 border border-secondary-200 rounded-lg text-secondary-800 focus:outline-none focus:ring-2 focus:ring-accent-500 font-mono text-sm"
                     rows={3}
                   />
+                </div>
+                
+                <div className="mt-2 p-3 bg-secondary-50 rounded-lg text-xs text-secondary-600">
+                  <p className="font-medium">Supported Formats:</p>
+                  <p>- Array format: [1, 2, 3, 4, ...] (copied from the interactive tool)</p>
+                  <p>- Hex format: a1b2c3d4... (traditional format without spaces)</p>
                 </div>
                 
                 <button 
@@ -703,19 +716,17 @@ export default function TryMLDSAPage() {
                 >
                   Verify External Signature
                 </button>
-                
-                {externalVerifyResult !== null && (
-                  <div className={`p-3 rounded-lg text-sm font-medium ${
-                    externalVerifyResult 
-                      ? 'bg-green-50 text-green-800 border border-green-200' 
-                      : 'bg-red-50 text-red-800 border border-red-200'
-                  }`}>
-                    {externalVerifyResult 
-                      ? '✓ External signature is valid! The file is authentic and hasn\'t been tampered with.' 
-                      : '✗ External signature verification failed! Check that you\'ve selected the correct algorithm, and that the public key and signature are in the correct format.'}
-                  </div>
-                )}
               </div>
+
+              {externalVerificationResult && (
+                <div className={`mt-4 p-3 rounded-lg ${
+                  externalVerificationSuccess 
+                    ? 'bg-green-50 text-green-800 border border-green-200' 
+                    : 'bg-red-50 text-red-800 border border-red-200'
+                }`}>
+                  {externalVerificationResult}
+                </div>
+              )}
             </div>
           </div>
           
@@ -734,4 +745,4 @@ export default function TryMLDSAPage() {
       </div>
     </div>
   );
-} 
+}

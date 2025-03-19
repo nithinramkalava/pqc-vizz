@@ -3,39 +3,40 @@
 import React, { useState, useEffect } from 'react';
 import { slh_dsa } from 'pqc';
 import Link from 'next/link';
+import LatticeVisualizer from '../../components/LatticeVisualizer';
 
-// Binary visualizer component
-const BinaryVisualizer = ({ data, maxBits = 512 }: { data: Uint8Array | null, maxBits?: number }) => {
-  if (!data) return null;
+// Binary visualizer component - may be used elsewhere, keeping for backward compatibility
+// const BinaryVisualizer = ({ data, maxBits = 512 }: { data: Uint8Array | null, maxBits?: number }) => {
+//   if (!data) return null;
   
-  // Convert bytes to bits
-  const bits: boolean[] = [];
-  for (let i = 0; i < Math.min(data.length, Math.ceil(maxBits / 8)); i++) {
-    const byte = data[i];
-    for (let bit = 7; bit >= 0; bit--) {
-      if (bits.length < maxBits) {
-        bits.push(Boolean((byte >> bit) & 1));
-      }
-    }
-  }
+//   // Convert bytes to bits
+//   const bits: boolean[] = [];
+//   for (let i = 0; i < Math.min(data.length, Math.ceil(maxBits / 8)); i++) {
+//     const byte = data[i];
+//     for (let bit = 7; bit >= 0; bit--) {
+//       if (bits.length < maxBits) {
+//         bits.push(Boolean((byte >> bit) & 1));
+//       }
+//     }
+//   }
   
-  return (
-    <div className="mt-3 grid grid-cols-8 gap-[1px] bg-secondary-100 p-1 rounded-md overflow-hidden">
-      {bits.map((bit, i) => (
-        <div 
-          key={i} 
-          className={`h-3 w-full ${bit ? 'bg-secondary-600' : 'bg-secondary-200'}`}
-          title={`Bit ${i}: ${bit ? '1' : '0'}`}
-        />
-      ))}
-      {data.length * 8 > maxBits && (
-        <div className="col-span-8 text-xs text-center text-secondary-600 mt-1">
-          Showing first {maxBits} of {data.length * 8} bits
-        </div>
-      )}
-    </div>
-  );
-};
+//   return (
+//     <div className="mt-3 grid grid-cols-8 gap-[1px] bg-secondary-100 p-1 rounded-md overflow-hidden">
+//       {bits.map((bit, i) => (
+//         <div 
+//           key={i} 
+//           className={`h-3 w-full ${bit ? 'bg-primary-600' : 'bg-secondary-200'}`}
+//           title={`Bit ${i}: ${bit ? '1' : '0'}`}
+//         />
+//       ))}
+//       {data.length * 8 > maxBits && (
+//         <div className="col-span-8 text-xs text-center text-secondary-600 mt-1">
+//           Showing first {maxBits} of {data.length * 8} bits
+//         </div>
+//       )}
+//     </div>
+//   );
+// };
 
 export default function TrySLHDSAPage() {
   const [algorithm, setAlgorithm] = useState<string>('slh_dsa_sha2_128s');
@@ -56,11 +57,11 @@ export default function TrySLHDSAPage() {
   const [expandedSignature, setExpandedSignature] = useState(false);
   const [expandedFileSignature, setExpandedFileSignature] = useState(false);
   
-  // Binary visualization states
-  const [showBinaryPublicKey, setShowBinaryPublicKey] = useState(false);
-  const [showBinarySecretKey, setShowBinarySecretKey] = useState(false);
-  const [showBinarySignature, setShowBinarySignature] = useState(false);
-  const [showBinaryFileSignature, setShowBinaryFileSignature] = useState(false);
+  // Binary visualization states (update to use lattice states)
+  const [showLatticePublicKey, setShowLatticePublicKey] = useState(false);
+  const [showLatticeSecretKey, setShowLatticeSecretKey] = useState(false);
+  const [showLatticeSignature, setShowLatticeSignature] = useState(false);
+  const [showLatticeFileSignature, setShowLatticeFileSignature] = useState(false);
   
   // External signature verification states
   const [externalFile, setExternalFile] = useState<File | null>(null);
@@ -103,10 +104,10 @@ export default function TrySLHDSAPage() {
     setExpandedSecretKey(false);
     setExpandedSignature(false);
     setExpandedFileSignature(false);
-    setShowBinaryPublicKey(false);
-    setShowBinarySecretKey(false);
-    setShowBinarySignature(false);
-    setShowBinaryFileSignature(false);
+    setShowLatticePublicKey(false);
+    setShowLatticeSecretKey(false);
+    setShowLatticeSignature(false);
+    setShowLatticeFileSignature(false);
     setExternalFile(null);
     setExternalPublicKey('');
     setExternalSignature('');
@@ -285,17 +286,36 @@ export default function TrySLHDSAPage() {
       const fileBuffer = await externalFile.arrayBuffer();
       const fileBytes = new Uint8Array(fileBuffer);
       
-      // Convert hex strings to bytes
-      const publicKeyBytes = hexToBytes(externalPublicKey);
-      const signatureBytes = hexToBytes(externalSignature);
+      // Function to parse the input value (either array or hex)
+      const parseInputValue = (value: string): Uint8Array => {
+        // Try to parse as array format [1, 2, 3, ...]
+        if (value.trim().startsWith('[') && value.trim().endsWith(']')) {
+          try {
+            const arrayData = JSON.parse(value);
+            if (Array.isArray(arrayData)) {
+              return new Uint8Array(arrayData);
+            }
+          } catch (err) {
+            console.error("Failed to parse input as array:", err);
+          }
+        }
+        
+        // Fallback to hex format
+        return hexToBytes(value.replace(/\s+/g, ''));
+      };
+      
+      // Convert inputs to bytes
+      const publicKeyBytes = parseInputValue(externalPublicKey);
+      const signatureBytes = parseInputValue(externalSignature);
       
       // Verify the signature
       const isValid = selectedAlgorithm.verify(publicKeyBytes, fileBytes, signatureBytes);
       
       setExternalVerifyResult(isValid);
       log(`External signature verification result: ${isValid ? 'VALID' : 'INVALID'}`);
-    } catch (error) {
-      log(`External verification error: ${error}`);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log(`External verification error: ${errorMessage}`);
       setExternalVerifyResult(false);
     }
   };
@@ -308,25 +328,42 @@ export default function TrySLHDSAPage() {
     return new Uint8Array(hexChars.map(byte => parseInt(byte, 16)));
   };
   
-  // Convert Uint8Array to hex string for display
-  const bytesToHex = (bytes: Uint8Array | null): string => {
-    if (!bytes) return '';
-    return Array.from(bytes)
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('');
-  };
-  
-  // Copy to clipboard function
-  const copyToClipboard = (text: string, label: string) => {
-    navigator.clipboard.writeText(text).then(
+  // Convert Uint8Array to hex string for display - kept for compatibility
+  // const bytesToHex = (bytes: Uint8Array | null): string => {
+  //   if (!bytes) return '';
+  //   return Array.from(bytes)
+  //     .map(b => b.toString(16).padStart(2, '0'))
+  //     .join('');
+  // };
+
+  // Copy to clipboard function - for arrays
+  const copyArrayToClipboard = (data: Uint8Array | null, label: string) => {
+    if (!data) return;
+    
+    // Format the array for display: [1, 2, 3, ...]
+    const arrayString = `[${Array.from(data).join(', ')}]`;
+    
+    navigator.clipboard.writeText(arrayString).then(
       () => {
-        log(`Copied ${label} to clipboard`);
+        log(`Copied ${label} to clipboard as array format`);
       },
       () => {
         log(`Failed to copy ${label} to clipboard`);
       }
     );
   };
+
+  // Copy to clipboard function - kept for compatibility
+  // const copyToClipboard = (text: string, label: string) => {
+  //   navigator.clipboard.writeText(text).then(
+  //     () => {
+  //       console.log(`Copied ${label} to clipboard as hex format`);
+  //     },
+  //     () => {
+  //       console.log(`Failed to copy ${label} to clipboard`);
+  //     }
+  //   );
+  // };
 
   return (
     <div className="bg-secondary-50 min-h-screen">
@@ -391,7 +428,7 @@ export default function TrySLHDSAPage() {
                           {expandedPublicKey ? "Collapse" : "Expand"}
                         </button>
                         <button 
-                          onClick={() => copyToClipboard(bytesToHex(keyPair.publicKey), "Public Key")}
+                          onClick={() => copyArrayToClipboard(keyPair.publicKey, "Public Key")}
                           className="text-xs px-2 py-1 bg-primary-100 text-primary-700 rounded hover:bg-primary-200"
                         >
                           Copy
@@ -401,21 +438,24 @@ export default function TrySLHDSAPage() {
                     <div className="bg-secondary-50 p-3 rounded-lg overflow-x-auto">
                       <code className="text-xs text-secondary-700 break-all">
                         {expandedPublicKey 
-                          ? bytesToHex(keyPair.publicKey)
-                          : bytesToHex(keyPair.publicKey).substring(0, 64) + "..."}
+                          ? `[${Array.from(keyPair.publicKey).join(', ')}]`
+                          : `[${Array.from(keyPair.publicKey).slice(0, 20).join(', ')}${keyPair.publicKey.length > 20 ? ', ...' : ''}]`}
                       </code>
                     </div>
                     <div className="text-xs text-secondary-600 mt-1 flex justify-between">
                       <span>{keyPair.publicKey.length} bytes</span>
                       <button 
-                        onClick={() => setShowBinaryPublicKey(!showBinaryPublicKey)}
+                        onClick={() => setShowLatticePublicKey(!showLatticePublicKey)}
                         className="text-secondary-600 hover:text-secondary-800 underline text-xs"
                       >
-                        {showBinaryPublicKey ? "Hide Lattice" : "Show Lattice"}
+                        {showLatticePublicKey ? "Lattice" : "Lattice"}
                       </button>
                     </div>
-                    {showBinaryPublicKey && (
-                      <BinaryVisualizer data={keyPair.publicKey} />
+                    
+                    {showLatticePublicKey && (
+                      <div className="mt-2">
+                        <LatticeVisualizer data={keyPair.publicKey} label="Public Key" />
+                      </div>
                     )}
                   </div>
                   
@@ -430,7 +470,7 @@ export default function TrySLHDSAPage() {
                           {expandedSecretKey ? "Collapse" : "Expand"}
                         </button>
                         <button 
-                          onClick={() => copyToClipboard(bytesToHex(keyPair.secretKey), "Secret Key")}
+                          onClick={() => copyArrayToClipboard(keyPair.secretKey, "Secret Key")}
                           className="text-xs px-2 py-1 bg-primary-100 text-primary-700 rounded hover:bg-primary-200"
                         >
                           Copy
@@ -440,21 +480,24 @@ export default function TrySLHDSAPage() {
                     <div className="bg-secondary-50 p-3 rounded-lg overflow-x-auto">
                       <code className="text-xs text-secondary-700 break-all">
                         {expandedSecretKey 
-                          ? bytesToHex(keyPair.secretKey)
-                          : bytesToHex(keyPair.secretKey).substring(0, 64) + "..."}
+                          ? `[${Array.from(keyPair.secretKey).join(', ')}]`
+                          : `[${Array.from(keyPair.secretKey).slice(0, 20).join(', ')}${keyPair.secretKey.length > 20 ? ', ...' : ''}]`}
                       </code>
                     </div>
                     <div className="text-xs text-secondary-600 mt-1 flex justify-between">
                       <span>{keyPair.secretKey.length} bytes</span>
                       <button 
-                        onClick={() => setShowBinarySecretKey(!showBinarySecretKey)}
+                        onClick={() => setShowLatticeSecretKey(!showLatticeSecretKey)}
                         className="text-secondary-600 hover:text-secondary-800 underline text-xs"
                       >
-                        {showBinarySecretKey ? "Hide Lattice" : "Show Lattice"}
+                        {showLatticeSecretKey ? "Lattice" : "Lattice"}
                       </button>
                     </div>
-                    {showBinarySecretKey && (
-                      <BinaryVisualizer data={keyPair.secretKey} />
+                    
+                    {showLatticeSecretKey && (
+                      <div className="mt-2">
+                        <LatticeVisualizer data={keyPair.secretKey} label="Secret Key" />
+                      </div>
                     )}
                   </div>
                 </div>
@@ -520,7 +563,7 @@ export default function TrySLHDSAPage() {
                             {expandedSignature ? "Collapse" : "Expand"}
                           </button>
                           <button 
-                            onClick={() => copyToClipboard(bytesToHex(signature), "Signature")}
+                            onClick={() => copyArrayToClipboard(signature, "Signature")}
                             className="text-xs px-2 py-1 bg-primary-100 text-primary-700 rounded hover:bg-primary-200"
                           >
                             Copy
@@ -530,21 +573,24 @@ export default function TrySLHDSAPage() {
                       <div className="bg-secondary-50 p-3 rounded-lg overflow-x-auto">
                         <code className="text-xs text-secondary-700 break-all">
                           {expandedSignature 
-                            ? bytesToHex(signature)
-                            : bytesToHex(signature).substring(0, 64) + "..."}
+                            ? `[${Array.from(signature).join(', ')}]`
+                            : `[${Array.from(signature).slice(0, 20).join(', ')}${signature.length > 20 ? ', ...' : ''}]`}
                         </code>
                       </div>
                       <div className="text-xs text-secondary-600 mt-1 flex justify-between">
                         <span>{signature.length} bytes</span>
                         <button 
-                          onClick={() => setShowBinarySignature(!showBinarySignature)}
+                          onClick={() => setShowLatticeSignature(!showLatticeSignature)}
                           className="text-secondary-600 hover:text-secondary-800 underline text-xs"
                         >
-                          {showBinarySignature ? "Hide Lattice" : "Show Lattice"}
+                          {showLatticeSignature ? "Lattice" : "Lattice"}
                         </button>
                       </div>
-                      {showBinarySignature && (
-                        <BinaryVisualizer data={signature} />
+                      
+                      {showLatticeSignature && (
+                        <div className="mt-2">
+                          <LatticeVisualizer data={signature} label="Signature" />
+                        </div>
                       )}
                       
                       <div className="mt-2 p-3 bg-secondary-50 rounded-lg text-xs text-secondary-700">
@@ -636,7 +682,7 @@ export default function TrySLHDSAPage() {
                             {expandedFileSignature ? "Collapse" : "Expand"}
                           </button>
                           <button 
-                            onClick={() => copyToClipboard(bytesToHex(fileSignature), "File Signature")}
+                            onClick={() => copyArrayToClipboard(fileSignature, "File Signature")}
                             className="text-xs px-2 py-1 bg-primary-100 text-primary-700 rounded hover:bg-primary-200"
                           >
                             Copy
@@ -646,21 +692,24 @@ export default function TrySLHDSAPage() {
                       <div className="bg-secondary-50 p-3 rounded-lg overflow-x-auto">
                         <code className="text-xs text-secondary-700 break-all">
                           {expandedFileSignature 
-                            ? bytesToHex(fileSignature)
-                            : bytesToHex(fileSignature).substring(0, 64) + "..."}
+                            ? `[${Array.from(fileSignature).join(', ')}]`
+                            : `[${Array.from(fileSignature).slice(0, 20).join(', ')}${fileSignature.length > 20 ? ', ...' : ''}]`}
                         </code>
                       </div>
                       <div className="text-xs text-secondary-600 mt-1 flex justify-between">
                         <span>{fileSignature.length} bytes</span>
                         <button 
-                          onClick={() => setShowBinaryFileSignature(!showBinaryFileSignature)}
+                          onClick={() => setShowLatticeFileSignature(!showLatticeFileSignature)}
                           className="text-secondary-600 hover:text-secondary-800 underline text-xs"
                         >
-                          {showBinaryFileSignature ? "Hide Lattice" : "Show Lattice"}
+                          {showLatticeFileSignature ? "Lattice" : "Lattice"}
                         </button>
                       </div>
-                      {showBinaryFileSignature && (
-                        <BinaryVisualizer data={fileSignature} />
+                      
+                      {showLatticeFileSignature && (
+                        <div className="mt-2">
+                          <LatticeVisualizer data={fileSignature} label="File Signature" />
+                        </div>
                       )}
                       
                       <button 
@@ -732,25 +781,31 @@ export default function TrySLHDSAPage() {
                 </div>
                 
                 <div className="space-y-3">
-                  <label className="block font-medium text-secondary-800">Public Key (hex format):</label>
+                  <label className="block font-medium text-secondary-800">Public Key (hex or array format):</label>
                   <textarea
                     value={externalPublicKey}
                     onChange={(e) => setExternalPublicKey(e.target.value)}
-                    placeholder="Paste the public key in hex format..."
+                    placeholder="Paste the public key in hex format or as array like [1, 2, 3, ...]"
                     className="w-full p-3 border border-secondary-200 rounded-lg text-secondary-800 focus:outline-none focus:ring-2 focus:ring-secondary-500 font-mono text-sm"
                     rows={3}
                   />
                 </div>
                 
                 <div className="space-y-3">
-                  <label className="block font-medium text-secondary-800">Signature (hex format):</label>
+                  <label className="block font-medium text-secondary-800">Signature (hex or array format):</label>
                   <textarea
                     value={externalSignature}
                     onChange={(e) => setExternalSignature(e.target.value)}
-                    placeholder="Paste the signature in hex format..."
+                    placeholder="Paste the signature in hex format or as array like [1, 2, 3, ...]"
                     className="w-full p-3 border border-secondary-200 rounded-lg text-secondary-800 focus:outline-none focus:ring-2 focus:ring-secondary-500 font-mono text-sm"
                     rows={3}
                   />
+                </div>
+                
+                <div className="mt-2 p-3 bg-secondary-50 rounded-lg text-xs text-secondary-600">
+                  <p className="font-medium">Supported Formats:</p>
+                  <p>- Array format: [1, 2, 3, 4, ...] (copied from the interactive tool)</p>
+                  <p>- Hex format: a1b2c3d4... (traditional format without spaces)</p>
                 </div>
                 
                 <button 
