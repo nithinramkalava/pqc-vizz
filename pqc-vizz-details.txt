@@ -1,0 +1,191 @@
+# PQC-Vizz: Post-Quantum Cryptography Visualization Project
+
+## Project Overview
+PQC-Vizz is an interactive web application that visualizes and demonstrates the functionality of post-quantum cryptographic algorithms. Built on top of the PQC library, this project provides an intuitive interface for developers and researchers to understand how post-quantum cryptography works in practice. The application features real-time demonstrations, interactive visualizations, and educational content about NIST's standardized post-quantum algorithms.
+
+## Live Demo
+The project is available at: https://pqc-vizz.vercel.app/
+
+## Core Features
+
+### 1. Interactive Algorithm Demonstrations
+- Real-time key generation and exchange using ML-KEM
+- Digital signature creation and verification with ML-DSA
+- Hash-based signature operations with SLH-DSA
+- Step-by-step visualization of cryptographic operations
+- Live performance metrics and benchmarks
+
+### 2. Educational Visualizations
+- Matrix representation of lattice-based cryptography
+- Visual explanation of hash-based signature schemes
+- Animated flow diagrams for key exchange processes
+- Real-time updates of cryptographic parameters
+
+### 3. Developer Resources
+- Code snippets with live execution
+- Implementation examples
+- Best practices and usage guidelines
+- Integration tutorials
+
+## Technical Implementation
+
+### Frontend Architecture
+- Built with Next.js and React for optimal performance
+- TailwindCSS for responsive and modern UI
+- Interactive components using React hooks
+- Responsive design for all device sizes
+
+### Visualization Components
+1. **Algorithm Flow Diagrams**
+   - Interactive SVG-based diagrams
+   - Step-by-step process visualization
+   - Real-time state updates
+
+2. **Lattice Visualization**
+   - Matrix representation of cryptographic data
+   - Color-coded visualization
+   - Expandable/collapsible views
+   - Byte-level representation
+
+3. **Interactive Demos**
+   - Live cryptographic operations
+   - Parameter adjustment controls
+   - Real-time result display
+   - Error handling visualization
+
+### Integration with PQC Library
+- Direct integration with the PQC NPM package
+- Real-time cryptographic operations
+- Performance monitoring
+- Error handling and validation
+
+## Website Pages and Functionality
+
+### 1. Home Page (/)
+- Welcome screen with project overview
+- Quick access to main features
+- Navigation to different algorithm demonstrations
+- Information about post-quantum cryptography
+- Links to the three main algorithm pages
+
+### 2. ML-KEM Visualization (/ml-kem)
+- Interactive demonstration of key encapsulation mechanism
+- Features:
+  - Real-time key generation visualization
+  - Step-by-step encapsulation process
+  - Matrix representation of lattice operations
+  - Performance metrics for different security levels
+  - Parameter adjustment controls
+- User interactions:
+  - Generate new key pairs
+  - Perform encapsulation/decapsulation
+  - Adjust security parameters
+  - View detailed operation steps
+  - Export operation results
+
+### 3. ML-DSA Visualization (/ml-dsa)
+- Digital signature algorithm demonstration
+- Features:
+  - Signature generation visualization
+  - Verification process demonstration
+  - Polynomial operation visualization
+  - Security level comparison
+  - Performance benchmarking
+- User interactions:
+  - Create and verify signatures
+  - Modify message content
+  - Change security parameters
+  - View detailed signing process
+  - Compare different security levels
+
+### 4. SLH-DSA Visualization (/slh-dsa)
+- Hash-based signature scheme demonstration
+- Features:
+  - Signature process visualization
+  - Hash function selection
+  - Performance analysis
+- User interactions:
+  - Select hash function variants
+  - Generate and verify signatures
+  - View detailed signing steps
+
+### 5. Interactive Demos
+- Try-it-yourself pages for each algorithm:
+  - ML-KEM (/ml-kem/try-mlkem)
+  - ML-DSA (/ml-dsa/try-mldsa)
+  - SLH-DSA (/slh-dsa/try-slhdsa)
+- Features:
+  - Real-time key generation
+  - Signing and verification
+  - Encryption and decryption
+  - File handling capabilities
+  - Clipboard integration
+
+### 6. About Page (/about)
+- Project information and author details
+- Features:
+  - Project overview
+  - Author information
+  - Research paper details
+  - Performance benchmarks
+  - References to NIST standards
+- Content sections:
+  - Project history
+  - Implementation highlights
+  - Key findings
+  - Contact information
+  - Resources
+
+## User Interface Features
+
+### 1. Algorithm Selection
+- Easy switching between different algorithms
+- Security level selection
+- Parameter customization
+- Preset configurations
+
+### 2. Operation Controls
+- Start operations
+- View step-by-step results
+- Parameter adjustment
+- Result verification
+
+### 3. Visualization Options
+- Expandable/collapsible views
+- Lattice visualizations
+- Export capabilities
+- Copy to clipboard functionality
+
+## Getting Started
+1. Clone the repository
+2. Install dependencies:
+   ```bash
+   npm install
+   # or
+   yarn install
+   # or
+   pnpm install
+   ```
+3. Run the development server:
+   ```bash
+   npm run dev
+   # or
+   yarn dev
+   # or
+   pnpm dev
+   ```
+4. Open http://localhost:3000 in your browser
+
+## Project Structure
+- `/src/app`: Next.js app directory structure
+- `/src/app/components`: React components for visualizations
+- `/public`: Static assets and resources
+
+## Author
+Nithin Ram Kalava
+Email: nithinramkalava@gmail.com
+
+## References
+- [NIST FIPS 203](https://doi.org/10.6028/NIST.FIPS.203) - Module-Lattice-Based Key-Encapsulation Mechanism Standard
+- [NIST FIPS 204](https://doi.org/10.6028/NIST.FIPS.204) - Module-Lattice-Based Digital Signature Standard
+- [NIST FIPS 205](https://doi.org/10.6028/NIST.FIPS.205) - Stateless Hash-Based Digital Signature Standard 
