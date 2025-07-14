@@ -183,7 +183,7 @@ The project is available at: https://pqc-vizz.vercel.app/
 
 ## Author
 Nithin Ram Kalava
-Email: nithinramkalava@gmail.com
+Email: contact@nithinram.com
 
 ## References
 - [NIST FIPS 203](https://doi.org/10.6028/NIST.FIPS.203) - Module-Lattice-Based Key-Encapsulation Mechanism Standard

@@ -146,7 +146,7 @@ export default function AboutPage() {
                       <svg className="h-5 w-5 text-primary-600 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                       </svg>
-                      <a href="mailto:nithinramkalava@gmail.com" className="text-primary-700 hover:underline">nithinramkalava@gmail.com</a>
+                      <a href="mailto:contact@nithinram.com" className="text-primary-700 hover:underline">contact@nithinram.com</a>
                     </div>
                   </div>
                   
@@ -458,7 +458,7 @@ export default function AboutPage() {
                       </svg>
                       <div>
                         <h4 className="font-medium text-primary-900">Email</h4>
-                        <a href="mailto:nithinramkalava@gmail.com" className="text-primary-700 hover:underline">nithinramkalava@gmail.com</a>
+                        <a href="mailto:contact@nithinram.com" className="text-primary-700 hover:underline">contact@nithinram.com</a>
                       </div>
                     </div>
                   </div>

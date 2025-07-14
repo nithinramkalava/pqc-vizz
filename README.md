@@ -43,24 +43,10 @@ This project is accompanied by a research paper titled "Post-Quantum Security fo
 - **Cryptography:** JavaScript implementation of NIST FIPS 203, 204, and 205
 - **Deployment:** Vercel
 
-## 🚀 Getting Started
-
-First, run the development server:
-
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
 ## 📝 Author
 
 **Nithin Ram Kalava**  
-Email: nithinramkalava@gmail.com
+Email: contact@nithinram.com
 
 ## 📚 References
 
